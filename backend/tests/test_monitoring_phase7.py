@@ -154,6 +154,7 @@ def test_admin_monitoring_summary_reports_safe_counts(
     payload = response.json()
     assert payload["backend_status"] == "ok"
     assert payload["database_reachable"] is True
+    assert "celery_queue_length" in payload
     assert payload["active_model"]["version"] == "demo-v1"
     assert payload["total_cases"] == 2
     assert payload["total_jobs_by_status"]["queued"] == 1

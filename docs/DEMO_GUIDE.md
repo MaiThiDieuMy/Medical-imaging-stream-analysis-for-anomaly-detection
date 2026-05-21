@@ -20,6 +20,10 @@ Open:
 - MinIO console: http://localhost:9001
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000
+- Loki: http://localhost:3100
+- cAdvisor: http://localhost:8080
+- Flower: http://localhost:5555
+- RedisInsight: http://localhost:5540
 
 The backend is an API server, not the frontend UI. Use the frontend URL for the hospital workflow and Swagger for direct API checks.
 
@@ -112,11 +116,12 @@ What to say:
 ## 7. Monitoring
 
 1. Open `Monitoring` as Admin.
-2. Show backend status, DB reachability, Redis broker status, active model, job counts, review counts, and request/cache counters.
+2. Show backend status, DB reachability, Redis broker status, Celery queue length, active model, job counts, review counts, and request/cache counters.
 3. Open Grafana at http://localhost:3000 and Prometheus at http://localhost:9090.
-4. Explain Prometheus scrapes backend `/metrics`.
-5. In Grafana, open the `Medical Imaging Demo` folder and the `Medical Imaging Demo Monitoring` dashboard.
-6. In Prometheus, useful queries are:
+4. Explain Prometheus scrapes backend `/metrics`, cAdvisor, Redis exporter, PostgreSQL exporter, Loki, and Promtail.
+5. In Grafana, open the `Medical Imaging Demo` folder and show the System Overview, Application Overview, Celery And Redis, Logs Overview, and PostgreSQL And MinIO dashboards.
+6. Open Flower at http://localhost:5555 for Celery task visibility and RedisInsight at http://localhost:5540 for Redis inspection.
+7. In Prometheus, useful queries are:
 
 ```promql
 analyze_requests_total
@@ -124,6 +129,11 @@ analyze_cache_hits_total
 analyze_cache_misses_total
 analysis_jobs_total
 case_reviews_total
+celery_queue_length
+model_active_info
+minio_storage_errors_total
+up{job="redis-exporter"}
+up{job="postgres-exporter"}
 ```
 
 ## 8. Final Validation

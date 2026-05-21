@@ -23,6 +23,7 @@ from app.mlops.mlflow_registry import (
     register_model_version,
 )
 from app.core.config import settings
+from app.monitoring.metrics import record_mlflow_registration
 from app.schemas.admin import (
     AIModelCreate,
     CandidateModelCreate,
@@ -128,6 +129,12 @@ class ModelAdminService:
         payload: MLflowLocalCheckpointRegisterRequest,
     ) -> MLflowRegisterResponse:
         self._ensure_unique_model_version(payload.model_name, payload.version)
+        logger.info(
+            "MLflow registration started: model_name=%s version=%s path=%s",
+            payload.model_name,
+            payload.version,
+            payload.model_path,
+        )
         try:
             logged = log_local_checkpoint_model(
                 model_name=payload.model_name,
@@ -162,17 +169,43 @@ class ModelAdminService:
             )
             self.db.commit()
             self.db.refresh(model)
+            record_mlflow_registration(status="success")
+            logger.info(
+                "MLflow registration completed: ai_model_id=%s run_id=%s model_version=%s",
+                model.model_id,
+                logged.run_id,
+                registered.version,
+            )
         except (FileNotFoundError, ValueError) as exc:
             self.db.rollback()
+            record_mlflow_registration(status="error")
+            logger.warning(
+                "MLflow registration rejected: model_name=%s version=%s reason=%s",
+                payload.model_name,
+                payload.version,
+                exc,
+            )
             raise ModelAdminServiceError(str(exc), status_code=404) from exc
         except IntegrityError as exc:
             self.db.rollback()
+            record_mlflow_registration(status="error")
+            logger.warning(
+                "MLflow registration duplicate model metadata: model_name=%s version=%s",
+                payload.model_name,
+                payload.version,
+            )
             raise ModelAdminServiceError(
                 "AIModel model_name + version must be unique",
                 status_code=409,
             ) from exc
         except Exception as exc:
             self.db.rollback()
+            record_mlflow_registration(status="error")
+            logger.exception(
+                "MLflow registration failed: model_name=%s version=%s",
+                payload.model_name,
+                payload.version,
+            )
             raise ModelAdminServiceError(
                 f"MLflow registration failed: {exc}",
                 status_code=502,

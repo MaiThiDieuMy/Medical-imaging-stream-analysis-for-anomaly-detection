@@ -21,6 +21,7 @@ class MonitoringSummaryResponse(BaseModel):
     backend_status: str
     database_reachable: bool
     redis_broker_status: str
+    celery_queue_length: int | None = None
     active_model: MonitoringActiveModel | None = None
     total_cases: int
     total_jobs_by_status: dict[str, int]

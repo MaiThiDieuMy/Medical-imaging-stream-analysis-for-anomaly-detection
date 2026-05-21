@@ -53,6 +53,7 @@ class MonitoringService:
             "backend_status": "ok",
             "database_reachable": database_reachable,
             "redis_broker_status": self._redis_broker_status(),
+            "celery_queue_length": self._celery_queue_length(),
             "active_model": active_model,
             "total_cases": total_cases,
             "total_jobs_by_status": total_jobs_by_status,
@@ -67,7 +68,25 @@ class MonitoringService:
         database_reachable = self._database_reachable()
         job_counts = self._count_jobs_by_status() if database_reachable else {}
         review_counts = self._count_reviews_by_status() if database_reachable else {}
+        active_model = get_active_model(self.db) if database_reachable else None
+        celery_queue_length = self._celery_queue_length()
+        completed_jobs = max(
+            counters.get("inference_jobs_completed_total", 0),
+            job_counts.get(ProcessingStatus.COMPLETED.value, 0),
+        )
+        failed_jobs = max(
+            counters.get("inference_jobs_failed_total", 0),
+            job_counts.get(ProcessingStatus.FAILED.value, 0),
+        )
         lines = [
+            "# HELP backend_info Static backend application information.",
+            "# TYPE backend_info gauge",
+            (
+                'backend_info{app_name="'
+                f'{self._label_value(settings.app_name)}",app_version="'
+                f'{self._label_value(settings.app_version)}",app_env="'
+                f'{self._label_value(settings.app_env)}"}} 1'
+            ),
             "# HELP analyze_requests_total Total analyze service requests.",
             "# TYPE analyze_requests_total counter",
             f"analyze_requests_total {counters.get('analyze_requests_total', 0)}",
@@ -77,6 +96,21 @@ class MonitoringService:
             "# HELP analyze_cache_misses_total Total analyze cache misses.",
             "# TYPE analyze_cache_misses_total counter",
             f"analyze_cache_misses_total {counters.get('analyze_cache_misses_total', 0)}",
+            "# HELP inference_jobs_completed_total Completed inference jobs observed by the system.",
+            "# TYPE inference_jobs_completed_total counter",
+            f"inference_jobs_completed_total {completed_jobs}",
+            "# HELP inference_jobs_failed_total Failed inference jobs observed by the system.",
+            "# TYPE inference_jobs_failed_total counter",
+            f"inference_jobs_failed_total {failed_jobs}",
+            "# HELP minio_storage_errors_total MinIO storage errors observed by the backend.",
+            "# TYPE minio_storage_errors_total counter",
+            f"minio_storage_errors_total {counters.get('minio_storage_errors_total', 0)}",
+            "# HELP mlflow_registration_total MLflow registration attempts observed by the backend.",
+            "# TYPE mlflow_registration_total counter",
+            f"mlflow_registration_total {counters.get('mlflow_registration_total', 0)}",
+            "# HELP celery_queue_length Current Redis list length for the default Celery queue.",
+            "# TYPE celery_queue_length gauge",
+            f"celery_queue_length {celery_queue_length if celery_queue_length is not None else -1}",
             "# HELP analysis_jobs_total Analysis jobs by status.",
             "# TYPE analysis_jobs_total gauge",
         ]
@@ -97,6 +131,21 @@ class MonitoringService:
             lines.append(
                 f'case_reviews_total{{status="{status}"}} {review_counts.get(status, 0)}'
             )
+        lines.extend(
+            [
+                "# HELP model_active_info Active AI model metadata.",
+                "# TYPE model_active_info gauge",
+            ]
+        )
+        if active_model is not None:
+            lines.append(
+                'model_active_info{model_id="'
+                f'{self._label_value(str(active_model.model_id))}",model_name="'
+                f'{self._label_value(active_model.model_name)}",version="'
+                f'{self._label_value(active_model.version)}"}} 1'
+            )
+        else:
+            lines.append('model_active_info{model_id="",model_name="",version=""} 0')
         lines.append("")
         return "\n".join(lines)
 
@@ -138,3 +187,21 @@ class MonitoringService:
             return "redis-client-unavailable"
         except Exception:
             return "unreachable"
+
+    @staticmethod
+    def _celery_queue_length() -> int | None:
+        try:
+            from redis import Redis
+
+            client = Redis.from_url(
+                settings.celery_broker_url,
+                socket_connect_timeout=0.5,
+                socket_timeout=0.5,
+            )
+            return int(client.llen("celery"))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _label_value(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")

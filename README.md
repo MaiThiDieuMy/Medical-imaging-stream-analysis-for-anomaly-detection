@@ -20,7 +20,8 @@ This is a development and presentation demo. The local model is not clinically c
 - Confirmed/corrected labels only become training-ready after doctor/admin review.
 - Stored-image retrieval, case history/detail, and browser-printable HTML reports.
 - Retraining manifest export from confirmed/corrected labels only.
-- Monitoring summary plus Prometheus `/metrics` and a provisioned Grafana dashboard.
+- Operations monitoring with Prometheus, Grafana, Loki/Promtail logs, cAdvisor,
+  Flower, RedisInsight, Redis exporter, and PostgreSQL exporter.
 - Soft archive/deactivate actions for cases, users, and model metadata. Historical analysis results are not hard-deleted.
 
 ## Architecture Summary
@@ -64,8 +65,10 @@ backend/
   app/monitoring/   lightweight counters
   scripts/          seed and smoke scripts
 infra/
-  prometheus/       scrape config for backend /metrics
-  grafana/          Prometheus datasource and dashboard provisioning
+  prometheus/       scrape config and alert rules
+  grafana/          Prometheus/Loki datasource and dashboard provisioning
+  loki/             local Loki config for Docker logs
+  promtail/         Docker log scraping config
 frontend/
   src/api/          typed API client
   src/pages/        app screens
@@ -118,6 +121,10 @@ This file is mounted read-only into backend and Celery containers at `/app/artif
 - MLflow: http://localhost:5000
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000
+- Loki: http://localhost:3100
+- cAdvisor: http://localhost:8080
+- Flower: http://localhost:5555
+- RedisInsight: http://localhost:5540
 
 The backend is an API server, not the web frontend. Use the frontend URL for the application UI and the Swagger URL for API exploration.
 
@@ -134,6 +141,11 @@ analyze_cache_hits_total
 analyze_cache_misses_total
 analysis_jobs_total
 case_reviews_total
+celery_queue_length
+model_active_info
+minio_storage_errors_total
+up{job="redis-exporter"}
+up{job="postgres-exporter"}
 ```
 
 ## Walkthrough Workflow
@@ -150,6 +162,7 @@ case_reviews_total
 10. Open review/MLOps, confirm or correct pending reviews.
 11. Open case history/detail, stored image, and HTML report export.
 12. Open retraining summary, export a manifest if labels have been confirmed/corrected, and view monitoring/Grafana.
+13. Open Monitoring as Admin and use the infrastructure/log links for Prometheus, Grafana, Loki, Flower, RedisInsight, cAdvisor, MinIO, and MLflow.
 
 ## Product UI Workflow
 
@@ -167,7 +180,7 @@ Admin users see operational tools:
 - `Quản lý mô hình`: register candidate metadata, activate/promote models, archive inactive model metadata.
 - `Duyệt/gán nhãn lại`: review uncertain cases and manage retraining-ready labels.
 - `Tất cả ca chụp`: inspect cases and archive cases without deleting images or results.
-- `Monitoring`: backend, Redis, job/review metrics, Prometheus and Grafana links.
+- `Monitoring`: backend, Redis, job/review metrics, Prometheus, Grafana, Loki, Flower, RedisInsight, and cAdvisor links.
 
 Archive/deactivate behavior:
 
@@ -226,8 +239,11 @@ Windows PowerShell final check:
 - If image upload or worker download fails, check MinIO is running and `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and `MINIO_BUCKET` are configured.
 - If real-model inference fails, confirm `artifacts/models/best_model.pth` exists locally and Docker Compose mounted `./artifacts/models:/app/artifacts/models:ro`.
 - If MLflow registration fails, confirm MLflow is running at http://localhost:5000 and Docker backend uses `MLFLOW_TRACKING_URI=http://mlflow:5000`.
-- If jobs stay queued, check `docker compose logs -f celery_worker`.
+- If jobs stay queued, open Flower at http://localhost:5555 and check `docker compose logs -f celery_worker`.
+- If Redis queue state is unclear, open RedisInsight at http://localhost:5540.
 - If Grafana is empty, log in with `admin` / `admin123`, open the `Medical Imaging Demo` folder, and confirm Prometheus can scrape `http://backend:8000/metrics` from Docker Compose.
+- If logs are missing in Grafana, check Loki at http://localhost:3100/ready and Promtail logs with `docker compose logs -f promtail`.
+- If Prometheus alerts or targets are missing, open http://localhost:9090/targets and confirm backend, cAdvisor, Redis exporter, PostgreSQL exporter, Loki, and Promtail are up.
 - If an older Grafana volume still uses a previous password, reset it with `docker compose exec grafana grafana cli admin reset-admin-password admin123`.
 - If the backend cannot connect to the database, run `docker compose ps` and verify PostgreSQL is healthy.
 - If frontend API calls fail, check `VITE_API_BASE_URL` and CORS origins.
@@ -246,4 +262,4 @@ Windows PowerShell final check:
 - DICOM is not supported yet.
 - The local MobileNetV3-Small checkpoint is a project model for demo/development and is not clinically certified.
 - No real retraining happens without confirmed datasets and real model weights.
-- Grafana includes a simple demo dashboard; it is not a full production observability setup.
+- Grafana includes demo dashboards and Loki log views; this is still a local development observability stack, not a production SRE setup.

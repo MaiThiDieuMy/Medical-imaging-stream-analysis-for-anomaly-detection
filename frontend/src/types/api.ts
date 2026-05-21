@@ -280,6 +280,7 @@ export type MonitoringSummary = {
   backend_status: string;
   database_reachable: boolean;
   redis_broker_status: string;
+  celery_queue_length: number | null;
   active_model: MonitoringActiveModel | null;
   total_cases: number;
   total_jobs_by_status: Record<string, number>;

@@ -1,0 +1,69 @@
+{
+  "uid": "logs-overview",
+  "title": "Logs Overview",
+  "tags": ["medical-imaging", "logs", "loki"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "Backend Logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "{service=\"backend\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Celery Worker Logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "{service=\"celery_worker\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "All Compose Logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "expr": "{compose_project=~\".+\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

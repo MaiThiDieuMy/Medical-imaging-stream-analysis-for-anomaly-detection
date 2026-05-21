@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from io import BytesIO
+import logging
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from app.core.config import settings
 from app.ml.types import ImageInput
+from app.monitoring.metrics import record_minio_storage_error
+
+logger = logging.getLogger(__name__)
 
 
 class ImageStorage:
@@ -104,16 +108,25 @@ class MinIOImageStorage(ImageStorage):
             return super().get_image_bytes(image_path)
 
         bucket, object_key = self._parse_object_uri(image_path)
-        response = self.client.get_object(bucket, object_key)
         try:
-            return response.read()
-        finally:
-            close = getattr(response, "close", None)
-            if callable(close):
-                close()
-            release_conn = getattr(response, "release_conn", None)
-            if callable(release_conn):
-                release_conn()
+            response = self.client.get_object(bucket, object_key)
+            try:
+                return response.read()
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+                release_conn = getattr(response, "release_conn", None)
+                if callable(release_conn):
+                    release_conn()
+        except Exception:
+            logger.exception(
+                "MinIO get_object failed: bucket=%s object_key=%s",
+                bucket,
+                object_key,
+            )
+            record_minio_storage_error(operation="get_object")
+            raise
 
     def save_image_bytes(
         self,
@@ -128,18 +141,38 @@ class MinIOImageStorage(ImageStorage):
 
         self.ensure_bucket()
         object_key = f"xray/{image_hash[:2]}/{image_hash}.{normalized_format}"
-        self.client.put_object(
-            self.bucket,
-            object_key,
-            BytesIO(content),
-            length=len(content),
-            content_type=_content_type_for_format(normalized_format),
-        )
+        try:
+            self.client.put_object(
+                self.bucket,
+                object_key,
+                BytesIO(content),
+                length=len(content),
+                content_type=_content_type_for_format(normalized_format),
+            )
+        except Exception:
+            logger.exception(
+                "MinIO put_object failed: bucket=%s object_key=%s",
+                self.bucket,
+                object_key,
+            )
+            record_minio_storage_error(operation="put_object")
+            raise
         return f"minio://{self.bucket}/{object_key}"
 
     def ensure_bucket(self) -> None:
-        if not self.client.bucket_exists(self.bucket):
-            self.client.make_bucket(self.bucket)
+        try:
+            bucket_exists = self.client.bucket_exists(self.bucket)
+        except Exception:
+            logger.exception("MinIO bucket_exists failed: bucket=%s", self.bucket)
+            record_minio_storage_error(operation="bucket_exists")
+            raise
+        if not bucket_exists:
+            try:
+                self.client.make_bucket(self.bucket)
+            except Exception:
+                logger.exception("MinIO make_bucket failed: bucket=%s", self.bucket)
+                record_minio_storage_error(operation="make_bucket")
+                raise
 
     @staticmethod
     def _parse_object_uri(image_path: str) -> tuple[str, str]:

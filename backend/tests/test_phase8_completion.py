@@ -318,3 +318,6 @@ def test_metrics_endpoint_returns_prometheus_text(
     assert response.status_code == 200
     assert "analyze_requests_total" in response.text
     assert "analysis_jobs_total" in response.text
+    assert "backend_info" in response.text
+    assert "celery_queue_length" in response.text
+    assert "model_active_info" in response.text

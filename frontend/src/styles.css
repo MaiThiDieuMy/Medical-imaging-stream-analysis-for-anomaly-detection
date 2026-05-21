@@ -476,6 +476,96 @@ td small {
   margin-top: 12px;
 }
 
+.tab-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #dbe4ee;
+  padding-bottom: 10px;
+}
+
+.tab-list button {
+  background: #fff;
+}
+
+.tab-list button.active {
+  background: #1e5aa8;
+  border-color: #1e5aa8;
+  color: #fff;
+}
+
+.link-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.link-card {
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  padding: 14px;
+  color: #18202a;
+  text-decoration: none;
+  background: #f8fafc;
+}
+
+.link-card:hover {
+  border-color: #4675bd;
+}
+
+.link-card span {
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.code-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.code-list code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: #111827;
+  color: #dbeafe;
+  overflow-x: auto;
+}
+
+.checklist {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.checklist div {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.5fr) minmax(120px, 0.4fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 12px;
+}
+
+.checklist div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.checklist span {
+  font-weight: 750;
+}
+
+.checklist small {
+  color: #64748b;
+  line-height: 1.4;
+}
+
 .section-heading,
 .review-header {
   display: flex;
@@ -585,6 +675,10 @@ td small {
   }
 
   .nav-list {
+    grid-template-columns: 1fr;
+  }
+
+  .checklist div {
     grid-template-columns: 1fr;
   }
 }

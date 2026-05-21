@@ -124,6 +124,28 @@ services:
       timeout: 5s
       retries: 5
 
+  redis_exporter:
+    image: ${REDIS_EXPORTER_IMAGE:-oliver006/redis_exporter:latest}
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redisinsight:
+    image: ${REDISINSIGHT_IMAGE:-redis/redisinsight:latest}
+    restart: unless-stopped
+    ports:
+      - "${REDISINSIGHT_PORT:-5540}:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
   minio:
     image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     restart: unless-stopped
@@ -136,6 +158,17 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+
+  postgres_exporter:
+    image: ${POSTGRES_EXPORTER_IMAGE:-prometheuscommunity/postgres-exporter:latest}
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-xray_demo}:${POSTGRES_PASSWORD:-xray_demo_password}@postgres:5432/${POSTGRES_DB:-xray_streaming}?sslmode=disable
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   mlflow:
     image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:latest}
@@ -160,6 +193,66 @@ services:
     volumes:
       - mlflow_data:/mlflow
 
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - flower
+      - --address=0.0.0.0
+      - --port=5555
+    environment: *backend-environment
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    volumes:
+      - ./artifacts/models:/app/artifacts/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:latest}
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:latest}
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/loki.yml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./infra/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: ${PROMTAIL_IMAGE:-grafana/promtail:latest}
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./infra/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_started
+
   prometheus:
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:latest}
     restart: unless-stopped
@@ -170,9 +263,18 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     depends_on:
       backend:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      postgres_exporter:
+        condition: service_started
+      loki:
         condition: service_started
 
   grafana:
@@ -198,3 +300,5 @@ volumes:
   mlflow_data:
   prometheus_data:
   grafana_data:
+  loki_data:
+  redisinsight_data:

@@ -13,6 +13,20 @@ function Invoke-Step {
     & $Command
 }
 
+function Invoke-HttpCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+        [Parameter(Mandatory = $true)]
+        [string] $Uri
+    )
+
+    Invoke-Step $Name {
+        $response = Invoke-WebRequest -Uri $Uri -Method Get -UseBasicParsing -TimeoutSec 10
+        Write-Host "$Uri -> HTTP $($response.StatusCode)"
+    }
+}
+
 Invoke-Step "Docker Compose services" {
     docker compose ps
 }
@@ -58,6 +72,19 @@ Invoke-Step "Prometheus metrics endpoint" {
     curl.exe -s "http://localhost:8000/metrics" |
         Select-String -Pattern "analyze_requests_total"
 }
+
+Invoke-HttpCheck "Prometheus ready" "http://localhost:9090/-/ready"
+
+Invoke-Step "Prometheus targets API" {
+    Invoke-RestMethod -Uri "http://localhost:9090/api/v1/targets" -Method Get |
+        ConvertTo-Json -Depth 8
+}
+
+Invoke-HttpCheck "Grafana health" "http://localhost:3000/api/health"
+Invoke-HttpCheck "Loki ready" "http://localhost:3100/ready"
+Invoke-HttpCheck "Flower UI" "http://localhost:5555"
+Invoke-HttpCheck "RedisInsight UI" "http://localhost:5540"
+Invoke-HttpCheck "cAdvisor UI" "http://localhost:8080"
 
 Write-Host ""
 Write-Host "Final check completed." -ForegroundColor Green

@@ -16,6 +16,10 @@ from app.models.ai_model import AIModel
 from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import AnalysisResult
 from app.models.enums import ProcessingStatus
+from app.monitoring.metrics import (
+    record_inference_job_completed,
+    record_inference_job_failed,
+)
 from app.services.reviews import ensure_pending_review_for_outputs
 from app.models.xray_case import XRayCase
 from app.services.storage import get_image_storage
@@ -181,6 +185,7 @@ def perform_inference(self: Task, job_id: str) -> dict[str, str | int | bool | N
             len(outputs),
             review_required,
         )
+        record_inference_job_completed()
         return {
             "job_id": str(job.job_id),
             "case_id": str(job.case_id),
@@ -192,6 +197,7 @@ def perform_inference(self: Task, job_id: str) -> dict[str, str | int | bool | N
     except Exception as exc:
         db.rollback()
         logger.exception("Worker failed job: job_id=%s", job_id)
+        record_inference_job_failed()
         _set_failed_status(db, parsed_job_id, exc)
         raise
     finally:

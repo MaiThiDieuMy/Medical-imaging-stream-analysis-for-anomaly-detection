@@ -27,6 +27,30 @@ def record_analyze_result(*, cache_hit: bool) -> None:
             _counters["cache_miss_total"] += 1
 
 
+def record_inference_job_completed() -> None:
+    with _lock:
+        _counters["inference_jobs_completed_total"] += 1
+
+
+def record_inference_job_failed() -> None:
+    with _lock:
+        _counters["inference_jobs_failed_total"] += 1
+
+
+def record_minio_storage_error(*, operation: str) -> None:
+    normalized_operation = operation.strip().lower().replace("-", "_") or "unknown"
+    with _lock:
+        _counters["minio_storage_errors_total"] += 1
+        _counters[f"minio_storage_errors_{normalized_operation}_total"] += 1
+
+
+def record_mlflow_registration(*, status: str) -> None:
+    normalized_status = status.strip().lower().replace("-", "_") or "unknown"
+    with _lock:
+        _counters["mlflow_registration_total"] += 1
+        _counters[f"mlflow_registration_{normalized_status}_total"] += 1
+
+
 def snapshot() -> dict[str, int]:
     with _lock:
         return dict(_counters)

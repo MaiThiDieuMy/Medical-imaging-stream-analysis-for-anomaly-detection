@@ -1,0 +1,66 @@
+groups:
+  - name: medical-imaging-demo
+    rules:
+      - alert: BackendDown
+        expr: up{job="xray-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Backend metrics endpoint is unreachable.
+
+      - alert: RedisExporterDown
+        expr: up{job="redis-exporter"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis exporter is unreachable.
+
+      - alert: PostgresExporterDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: PostgreSQL exporter is unreachable.
+
+      - alert: CeleryQueueBacklogHigh
+        expr: celery_queue_length > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Celery default queue has more than 10 pending jobs.
+
+      - alert: AnalysisJobFailuresDetected
+        expr: analysis_jobs_total{status="failed"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: One or more analysis jobs are marked failed.
+
+      - alert: MinIOStorageErrorsDetected
+        expr: minio_storage_errors_total > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Backend observed MinIO storage errors.
+
+      - alert: HighContainerCpuUsage
+        expr: sum(rate(container_cpu_usage_seconds_total{name!=""}[5m])) by (name) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Container CPU usage is high.
+
+      - alert: HighContainerMemoryUsage
+        expr: container_memory_working_set_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Container memory usage is high.
