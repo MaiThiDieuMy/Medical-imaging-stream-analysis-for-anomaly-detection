@@ -216,3 +216,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local ML artifacts
+artifacts/models/*
+!artifacts/models/README.md
+artifacts/sample_images/*
+!artifacts/sample_images/README.md
+artifacts/uploads/*
+artifacts/retraining_manifests/*
+!artifacts/retraining_manifests/README.md
+
+# Model weights and export formats
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Frontend dependencies/build output
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

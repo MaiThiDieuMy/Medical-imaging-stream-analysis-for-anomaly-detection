@@ -1,0 +1,7 @@
+# CPU-only PyTorch wheels for Docker and local development.
+# Keep these separate from requirements.txt to avoid pulling CUDA/NVIDIA packages.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy>=1.26,<2.0
+torch==2.3.1+cpu
+torchvision==0.18.1+cpu

@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from collections import Counter
+from threading import Lock
+
+_counters: Counter[str] = Counter()
+_lock = Lock()
+
+
+def record_request(*, path: str, method: str, status_code: int) -> None:
+    with _lock:
+        _counters["requests_total"] += 1
+        _counters[f"requests_status_{status_code}"] += 1
+        _counters[f"requests_method_{method.upper()}"] += 1
+        if path.startswith("/api/v1/analyze"):
+            _counters["analyze_http_requests_total"] += 1
+
+
+def record_analyze_result(*, cache_hit: bool) -> None:
+    with _lock:
+        _counters["analyze_requests_total"] += 1
+        if cache_hit:
+            _counters["analyze_cache_hits_total"] += 1
+            _counters["cache_hit_total"] += 1
+        else:
+            _counters["analyze_cache_misses_total"] += 1
+            _counters["cache_miss_total"] += 1
+
+
+def snapshot() -> dict[str, int]:
+    with _lock:
+        return dict(_counters)

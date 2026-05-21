@@ -1,0 +1,4 @@
+-r requirements.txt
+-r requirements-ml-cpu.txt
+pytest>=8.0,<9.0
+pytest-cov>=5.0,<8.0

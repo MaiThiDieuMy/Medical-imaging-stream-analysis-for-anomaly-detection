@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+from collections.abc import Generator
+from pathlib import Path
+import sys
+
+from fastapi.testclient import TestClient
+from PIL import Image
+import pytest
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+import app.models  # noqa: F401
+from app.core.database import Base, get_db
+from app.core.security import hash_password
+from app.main import app
+from app.ml.labels import DEMO_LABELS
+from app.models.ai_model import AIModel
+from app.models.analysis_job import AnalysisJob
+from app.models.analysis_result import AnalysisResult
+from app.models.enums import ProcessingStatus, UserRole
+from app.models.patient import Patient
+from app.models.user import User
+from app.models.xray_case import XRayCase
+from app.models.xray_image import XRayImage
+
+
+@pytest.fixture()
+def client_and_session_factory() -> Generator[
+    tuple[TestClient, sessionmaker[Session]],
+    None,
+    None,
+]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    def override_get_db() -> Generator[Session, None, None]:
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            yield client, session_factory
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+
+
+def _seed_user(
+    db: Session,
+    username: str,
+    password: str,
+    role: UserRole,
+    *,
+    is_active: bool = True,
+) -> User:
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        full_name=username,
+        role=role,
+        is_active=is_active,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _auth_header(client: TestClient, username: str, password: str) -> dict[str, str]:
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def _seed_model(db: Session, *, active: bool, version: str) -> AIModel:
+    model = AIModel(
+        model_name="phase9-model",
+        version=version,
+        model_path=f"artifacts/models/{version}.pth",
+        is_active=active,
+        f1_score=0.72 if active else 0.74,
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return model
+
+
+def _image_path(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    Image.new("RGB", (16, 16), (64, 96, 128)).save(path)
+    return path
+
+
+def _seed_case(
+    db: Session,
+    *,
+    model: AIModel,
+    uploaded_by: User,
+    image_path: Path,
+) -> XRayCase:
+    patient = Patient(
+        patient_code="PHASE9-001",
+        full_name="Phase 9 Patient",
+        gender="unknown",
+    )
+    case = XRayCase(
+        patient=patient,
+        uploaded_by_id=uploaded_by.user_id,
+        status=ProcessingStatus.COMPLETED,
+    )
+    db.add(case)
+    db.flush()
+    db.add_all(
+        [
+            XRayImage(
+                case_id=case.case_id,
+                file_name=image_path.name,
+                image_path=str(image_path),
+                image_hash="phase9-hash",
+                file_format="png",
+            ),
+            AnalysisJob(
+                case_id=case.case_id,
+                model_id=model.model_id,
+                status=ProcessingStatus.COMPLETED,
+            ),
+        ]
+    )
+    for label_name in DEMO_LABELS:
+        db.add(
+            AnalysisResult(
+                case_id=case.case_id,
+                model_id=model.model_id,
+                label_name=label_name,
+                probability=0.8,
+                predicted_positive=True,
+            )
+        )
+    db.commit()
+    db.refresh(case)
+    return case
+
+
+def test_inactive_user_cannot_login(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        _seed_user(
+            db,
+            "doctor_inactive",
+            "doctor123",
+            UserRole.USER,
+            is_active=False,
+        )
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"username": "doctor_inactive", "password": "doctor123"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_admin_can_deactivate_user_and_doctor_cannot_manage_users(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        admin = _seed_user(db, "admin_demo", "admin123", UserRole.ADMIN)
+        doctor = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)
+        doctor_id = doctor.user_id
+        assert admin.is_active
+
+    doctor_response = client.patch(
+        f"/api/v1/admin/users/{doctor_id}",
+        json={"is_active": False},
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+    assert doctor_response.status_code == 403
+
+    admin_response = client.patch(
+        f"/api/v1/admin/users/{doctor_id}",
+        json={"is_active": False},
+        headers=_auth_header(client, "admin_demo", "admin123"),
+    )
+    assert admin_response.status_code == 200
+    assert admin_response.json()["is_active"] is False
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"username": "doctor_demo", "password": "doctor123"},
+    )
+    assert login_response.status_code == 403
+
+
+def test_admin_archives_case_without_deleting_results(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db, active=True, version="active-v1")
+        _seed_user(db, "admin_demo", "admin123", UserRole.ADMIN)
+        doctor = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=doctor,
+            image_path=_image_path(tmp_path, "phase9.png"),
+        )
+        case_id = case.case_id
+
+    doctor_response = client.post(
+        f"/api/v1/cases/{case_id}/archive",
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+    assert doctor_response.status_code == 403
+
+    admin_response = client.post(
+        f"/api/v1/cases/{case_id}/archive",
+        headers=_auth_header(client, "admin_demo", "admin123"),
+    )
+    assert admin_response.status_code == 200
+    assert admin_response.json()["archived_at"] is not None
+
+    list_response = client.get(
+        "/api/v1/cases",
+        headers=_auth_header(client, "admin_demo", "admin123"),
+    )
+    assert list_response.status_code == 200
+    assert list_response.json() == []
+
+    with session_factory() as db:
+        results_count = db.scalar(
+            select(func.count())
+            .select_from(AnalysisResult)
+            .where(AnalysisResult.case_id == case_id)
+        )
+        archived_case = db.get(XRayCase, case_id)
+        assert archived_case is not None
+        assert archived_case.archived_at is not None
+        assert results_count == len(DEMO_LABELS)
+
+
+def test_admin_archives_inactive_model_but_not_active_model(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        _seed_user(db, "admin_demo", "admin123", UserRole.ADMIN)
+        active = _seed_model(db, active=True, version="active-v1")
+        inactive = _seed_model(db, active=False, version="candidate-v1")
+        active_id = active.model_id
+        inactive_id = inactive.model_id
+
+    headers = _auth_header(client, "admin_demo", "admin123")
+    active_response = client.post(
+        f"/api/v1/admin/models/{active_id}/archive",
+        headers=headers,
+    )
+    assert active_response.status_code == 409
+
+    inactive_response = client.post(
+        f"/api/v1/admin/models/{inactive_id}/archive",
+        headers=headers,
+    )
+    assert inactive_response.status_code == 200
+    assert inactive_response.json()["archived_at"] is not None
+
+    activate_response = client.post(
+        f"/api/v1/admin/models/{inactive_id}/activate",
+        headers=headers,
+    )
+    assert activate_response.status_code == 409

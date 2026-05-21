@@ -1,0 +1,200 @@
+x-backend-environment: &backend-environment
+  APP_NAME: ${APP_NAME:-Medical Imaging Stream Analysis API}
+  APP_VERSION: ${APP_VERSION:-0.1.0}
+  APP_ENV: ${APP_ENV:-local}
+  API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+  BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://xray_demo:xray_demo_password@postgres:5432/xray_streaming}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+  MODEL_SOURCE: ${MODEL_SOURCE:-local}
+  MODEL_ARCHITECTURE: ${MODEL_ARCHITECTURE:-mobilenet_v3_small}
+  MODEL_WEIGHTS_PATH: ${MODEL_WEIGHTS_PATH:-/app/artifacts/models/best_model.pth}
+  MODEL_DEVICE: ${MODEL_DEVICE:-cpu}
+  MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
+  ALLOW_DEMO_MODEL: ${ALLOW_DEMO_MODEL:-false}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio_demo_user}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio_demo_password}
+  MINIO_BUCKET: ${MINIO_BUCKET:-xray-images}
+  MINIO_SECURE: ${MINIO_SECURE:-false}
+  MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-10485760}
+  ALLOWED_IMAGE_EXTENSIONS: ${ALLOWED_IMAGE_EXTENSIONS:-.png,.jpg,.jpeg}
+  ALLOWED_IMAGE_CONTENT_TYPES: ${ALLOWED_IMAGE_CONTENT_TYPES:-image/png,image/jpeg,image/jpg}
+  LOW_CONFIDENCE_THRESHOLD: ${LOW_CONFIDENCE_THRESHOLD:-0.7}
+  REVIEW_NEAR_THRESHOLD_MARGIN: ${REVIEW_NEAR_THRESHOLD_MARGIN:-0.1}
+  RETRAIN_MIN_CONFIRMED_SAMPLES: ${RETRAIN_MIN_CONFIRMED_SAMPLES:-5}
+  RETRAINING_MANIFEST_DIR: ${RETRAINING_MANIFEST_DIR:-/app/artifacts/retraining_manifests}
+  MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+  MLFLOW_UI_URL: ${MLFLOW_UI_URL:-http://localhost:5000}
+  MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-chest-xray-stream-analysis}
+  MLFLOW_REGISTERED_MODEL_NAME: ${MLFLOW_REGISTERED_MODEL_NAME:-chest-xray-mobilenetv3-small}
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    environment: *backend-environment
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./artifacts/models:/app/artifacts/models:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app:celery_app
+      - worker
+      - --loglevel=${CELERY_LOG_LEVEL:-info}
+    environment: *backend-environment
+    volumes:
+      - ./artifacts/models:/app/artifacts/models:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      backend:
+        condition: service_started
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xray_streaming}
+      POSTGRES_USER: ${POSTGRES_USER:-xray_demo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xray_demo_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xray_demo} -d ${POSTGRES_DB:-xray_streaming}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_demo_user}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_demo_password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+
+  mlflow:
+    image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:latest}
+    restart: unless-stopped
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - "${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}"
+      - --default-artifact-root
+      - "${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}"
+      - --allowed-hosts
+      - "${MLFLOW_ALLOWED_HOSTS:-localhost,127.0.0.1,mlflow,mlflow:5000}"
+      - --cors-allowed-origins
+      - "${MLFLOW_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:5000,http://127.0.0.1:5000}"
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    volumes:
+      - mlflow_data:/mlflow
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:latest}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_started
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  mlflow_data:
+  prometheus_data:
+  grafana_data:
