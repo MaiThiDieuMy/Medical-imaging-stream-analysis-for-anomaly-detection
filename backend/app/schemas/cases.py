@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.ml.labels import DEMO_LABELS
 from app.schemas.analysis import AnalysisResultItem
 
 
@@ -69,3 +70,51 @@ class CaseDetailResponse(BaseModel):
     review_status: str | None = None
     review_note: str | None = None
     results: list[AnalysisResultItem] = Field(default_factory=list)
+
+
+class ConfirmedLabelSummary(BaseModel):
+    label_name: str
+    confirmed_positive: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaseReviewStatusResponse(BaseModel):
+    review_id: UUID | None = None
+    case_id: UUID
+    status: str
+    reason: str | None = None
+    reviewed_by: UUID | None = None
+    reviewed_at: datetime | None = None
+    note: str | None = None
+    confirmed_labels: list[ConfirmedLabelSummary] = Field(default_factory=list)
+
+
+class CaseLabelCorrection(BaseModel):
+    label_name: str
+    confirmed_positive: bool
+
+
+class CaseCorrectLabelsRequest(BaseModel):
+    labels: list[CaseLabelCorrection]
+    note: str | None = None
+
+    def label_map(self) -> dict[str, bool]:
+        return {item.label_name: item.confirmed_positive for item in self.labels}
+
+    @model_validator(mode="after")
+    def validate_labels(self) -> "CaseCorrectLabelsRequest":
+        self.validate_label_map(self.label_map())
+        return self
+
+    @staticmethod
+    def validate_label_map(labels: dict[str, bool]) -> None:
+        label_names = set(labels)
+        expected = set(DEMO_LABELS)
+        if label_names != expected or len(labels) != len(expected):
+            raise ValueError(
+                "Corrected labels must include exactly: "
+                f"{', '.join(DEMO_LABELS)}"
+            )
+        if sum(1 for selected in labels.values() if selected) != 1:
+            raise ValueError("Exactly one label must be selected")

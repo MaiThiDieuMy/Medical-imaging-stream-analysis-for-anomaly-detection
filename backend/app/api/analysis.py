@@ -18,13 +18,20 @@ from app.schemas.analysis import (
     JobStatusResponse,
     PatientAnalyzeRequest,
 )
-from app.schemas.cases import CaseDetailResponse, CaseListItem
+from app.schemas.cases import (
+    CaseCorrectLabelsRequest,
+    CaseDetailResponse,
+    CaseListItem,
+    CaseReviewStatusResponse,
+    ConfirmedLabelSummary,
+)
 from app.services.analyze import (
     AnalyzeService,
     AnalyzeServiceError,
     UploadedImageData,
 )
 from app.services.cases import CaseService, CaseServiceError
+from app.services.reviews import ReviewService, ReviewServiceError
 
 router = APIRouter(tags=["analysis"])
 
@@ -35,6 +42,31 @@ def _service_error_to_http(exc: AnalyzeServiceError) -> HTTPException:
 
 def _case_error_to_http(exc: CaseServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _review_error_to_http(exc: ReviewServiceError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _case_review_status_response(
+    case_id: UUID,
+    review,
+) -> CaseReviewStatusResponse:
+    if review is None:
+        return CaseReviewStatusResponse(case_id=case_id, status="no_review")
+    return CaseReviewStatusResponse(
+        review_id=review.review_id,
+        case_id=review.case_id,
+        status=review.status,
+        reason=review.reason,
+        reviewed_by=review.reviewed_by_id,
+        reviewed_at=review.reviewed_at,
+        note=review.note,
+        confirmed_labels=[
+            ConfirmedLabelSummary.model_validate(label, from_attributes=True)
+            for label in sorted(review.confirmed_labels, key=lambda item: item.label_name)
+        ],
+    )
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -76,6 +108,61 @@ async def analyze_xray(
 
     response.status_code = 200 if result.cache_hit else 202
     return result
+
+
+@router.get("/cases/{case_id}/review-status", response_model=CaseReviewStatusResponse)
+def get_case_review_status(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> CaseReviewStatusResponse:
+    try:
+        CaseService(db).ensure_access(case_id, current_user)
+        review = ReviewService(db).get_review_status_for_case(case_id)
+        return _case_review_status_response(case_id, review)
+    except CaseServiceError as exc:
+        raise _case_error_to_http(exc) from exc
+
+
+@router.post("/cases/{case_id}/confirm-result", response_model=CaseReviewStatusResponse)
+def confirm_case_result(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> CaseReviewStatusResponse:
+    try:
+        CaseService(db).ensure_access(case_id, current_user)
+        review = ReviewService(db).confirm_case_result(
+            case_id,
+            reviewed_by=current_user.user_id,
+        )
+        return _case_review_status_response(case_id, review)
+    except CaseServiceError as exc:
+        raise _case_error_to_http(exc) from exc
+    except ReviewServiceError as exc:
+        raise _review_error_to_http(exc) from exc
+
+
+@router.post("/cases/{case_id}/correct-labels", response_model=CaseReviewStatusResponse)
+def correct_case_labels(
+    case_id: UUID,
+    payload: CaseCorrectLabelsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> CaseReviewStatusResponse:
+    try:
+        CaseService(db).ensure_access(case_id, current_user)
+        review = ReviewService(db).correct_case_labels(
+            case_id,
+            labels=payload.label_map(),
+            note=payload.note,
+            reviewed_by=current_user.user_id,
+        )
+        return _case_review_status_response(case_id, review)
+    except CaseServiceError as exc:
+        raise _case_error_to_http(exc) from exc
+    except ReviewServiceError as exc:
+        raise _review_error_to_http(exc) from exc
 
 
 @router.get("/cases", response_model=list[CaseListItem])

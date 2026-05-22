@@ -144,6 +144,17 @@ export type CaseDetailResponse = {
   results: AnalysisResultItem[];
 };
 
+export type CaseReviewStatusResponse = {
+  review_id: string | null;
+  case_id: string;
+  status: string;
+  reason: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  note: string | null;
+  confirmed_labels: ConfirmedLabelItem[];
+};
+
 export type AIModel = {
   model_id: string;
   model_name: string;
@@ -253,10 +264,34 @@ export type RetrainingSummary = {
   corrected_reviews: number;
   training_ready_cases: number;
   should_trigger_retraining: boolean;
+  running_job: RetrainingJob | null;
+  latest_job: RetrainingJob | null;
 };
 
 export type RetrainingCheckResponse = RetrainingSummary & {
   message: string;
+};
+
+export type RetrainingJob = {
+  retraining_job_id: string;
+  status: string;
+  base_model_id: string;
+  candidate_model_id: string | null;
+  manifest_path: string | null;
+  output_model_path: string | null;
+  mlflow_run_id: string | null;
+  mlflow_model_uri: string | null;
+  training_samples_count: number;
+  min_required_samples: number;
+  accuracy: number | null;
+  precision_score: number | null;
+  recall_score: number | null;
+  f1_score: number | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  triggered_by_id: string | null;
 };
 
 export type ManifestExportResponse = {

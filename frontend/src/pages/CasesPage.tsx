@@ -10,6 +10,7 @@ import {
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
 import { StatusBadge } from "../components/StatusBadge";
+import { TrainingConfirmationPanel } from "../components/TrainingConfirmationPanel";
 import type { CaseDetailResponse, CaseListItem, UserRole } from "../types/api";
 import { compactId } from "../utils/format";
 
@@ -226,6 +227,14 @@ export function CasesPage({ role }: CasesPageProps) {
                 </div>
               </dl>
               <ResultTable results={selectedCase.results} />
+              {selectedCase.results.length > 0 && (
+                <TrainingConfirmationPanel
+                  caseId={selectedCase.case_id}
+                  caseStatus={selectedCase.status}
+                  onUpdated={() => void selectCase(selectedCase.case_id)}
+                  results={selectedCase.results}
+                />
+              )}
             </>
           ) : (
             <p className="muted">Chọn một ca để xem chi tiết.</p>

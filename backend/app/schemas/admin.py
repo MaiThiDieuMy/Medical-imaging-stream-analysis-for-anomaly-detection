@@ -99,6 +99,8 @@ class ReviewCorrectRequest(BaseModel):
                 "Corrected labels must include exactly: "
                 f"{', '.join(DEMO_LABELS)}"
             )
+        if sum(1 for item in self.labels if item.confirmed_positive) != 1:
+            raise ValueError("Exactly one label must be selected for multi-class data")
         return self
 
 
@@ -109,6 +111,30 @@ class TrainingReadySample(BaseModel):
     confirmed_labels: list[ConfirmedLabelItem]
 
 
+class RetrainingJobResponse(BaseModel):
+    retraining_job_id: UUID
+    status: str
+    base_model_id: UUID
+    candidate_model_id: UUID | None = None
+    manifest_path: str | None = None
+    output_model_path: str | None = None
+    mlflow_run_id: str | None = None
+    mlflow_model_uri: str | None = None
+    training_samples_count: int
+    min_required_samples: int
+    accuracy: float | None = None
+    precision_score: float | None = None
+    recall_score: float | None = None
+    f1_score: float | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    triggered_by_id: UUID | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RetrainingSummaryResponse(BaseModel):
     min_confirmed_samples: int
     pending_reviews: int
@@ -116,6 +142,8 @@ class RetrainingSummaryResponse(BaseModel):
     corrected_reviews: int
     training_ready_cases: int
     should_trigger_retraining: bool
+    running_job: RetrainingJobResponse | None = None
+    latest_job: RetrainingJobResponse | None = None
 
 
 class RetrainingCheckResponse(RetrainingSummaryResponse):

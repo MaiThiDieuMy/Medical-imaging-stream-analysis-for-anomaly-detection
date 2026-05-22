@@ -3,6 +3,7 @@ import { analyzeImage, getCaseResults, getJobStatus } from "../api/client";
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
 import { StatusBadge } from "../components/StatusBadge";
+import { TrainingConfirmationPanel } from "../components/TrainingConfirmationPanel";
 import type {
   AnalyzeFormValues,
   AnalyzeResponse,
@@ -39,6 +40,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     () => caseResults?.results ?? response?.results ?? [],
     [caseResults, response],
   );
+  const currentCaseStatus = String(caseResults?.status ?? jobStatus?.status ?? response?.status ?? "");
 
   useEffect(() => {
     if (!image) {
@@ -296,6 +298,13 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
             </button>
           )}
           <ResultTable results={results} />
+          {response?.case_id && results.length > 0 && (
+            <TrainingConfirmationPanel
+              caseId={response.case_id}
+              caseStatus={currentCaseStatus}
+              results={results}
+            />
+          )}
         </div>
       </div>
     </section>

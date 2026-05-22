@@ -296,7 +296,7 @@ def test_manifest_export_excludes_pending_reviews(
                     review_id=ready_review.review_id,
                     case_id=ready_case.case_id,
                     label_name=label_name,
-                    confirmed_positive=True,
+                    confirmed_positive=label_name == "Effusion",
                 )
             )
         db.commit()

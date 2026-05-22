@@ -5,12 +5,19 @@ import {
   correctReview,
   exportRetrainingManifest,
   getRetrainingSummary,
+  listRetrainingJobs,
   listPendingReviews,
+  triggerRetraining,
 } from "../api/client";
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
 import { StatusBadge } from "../components/StatusBadge";
-import type { CaseReview, LabelCorrection, RetrainingSummary } from "../types/api";
+import type {
+  CaseReview,
+  LabelCorrection,
+  RetrainingJob,
+  RetrainingSummary,
+} from "../types/api";
 import { compactId } from "../utils/format";
 
 const demoLabels = ["No Finding", "Effusion", "Infiltration", "Atelectasis"];
@@ -24,6 +31,7 @@ type ReviewMlopsPageProps = {
 export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
   const [reviews, setReviews] = useState<CaseReview[]>([]);
   const [summary, setSummary] = useState<RetrainingSummary | null>(null);
+  const [jobs, setJobs] = useState<RetrainingJob[]>([]);
   const [corrections, setCorrections] = useState<CorrectionState>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,19 +39,19 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
   async function refreshData() {
     const pending = await listPendingReviews();
     const retrainingSummary = isAdmin ? await getRetrainingSummary() : null;
+    const retrainingJobs = isAdmin ? await listRetrainingJobs() : [];
     setReviews(pending);
     setSummary(retrainingSummary);
+    setJobs(retrainingJobs);
     setCorrections((current) => {
       const next = { ...current };
       for (const review of pending) {
         if (!next[review.review_id]) {
+          const predictedLabel =
+            review.analysis_results.find((result) => result.predicted_positive)
+              ?.label_name ?? demoLabels[0];
           next[review.review_id] = Object.fromEntries(
-            demoLabels.map((label) => {
-              const predicted = review.analysis_results.find(
-                (result) => result.label_name === label,
-              )?.predicted_positive;
-              return [label, Boolean(predicted)];
-            }),
+            demoLabels.map((label) => [label, label === predictedLabel]),
           );
         }
       }
@@ -120,13 +128,28 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     }
   }
 
-  function setCorrection(reviewId: string, label: string, value: boolean) {
+  async function handleTriggerRetraining() {
+    setError(null);
+    setMessage(null);
+    if (!isAdmin) {
+      setMessage("Chỉ Quản trị viên được trigger retraining.");
+      return;
+    }
+    try {
+      const job = await triggerRetraining();
+      setMessage(`Đã tạo retraining job ${compactId(job.retraining_job_id)}.`);
+      await refreshData();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Không trigger được retraining.");
+    }
+  }
+
+  function selectCorrection(reviewId: string, label: string) {
     setCorrections((current) => ({
       ...current,
-      [reviewId]: {
-        ...(current[reviewId] ?? {}),
-        [label]: value,
-      },
+      [reviewId]: Object.fromEntries(
+        demoLabels.map((candidate) => [candidate, candidate === label]),
+      ),
     }));
   }
 
@@ -160,6 +183,14 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
           >
             Export manifest
           </button>
+          <button
+            className="primary"
+            disabled={!isAdmin || !summary?.should_trigger_retraining}
+            onClick={() => void handleTriggerRetraining()}
+            type="button"
+          >
+            Trigger retraining
+          </button>
         </div>
         {!isAdmin ? (
           <p className="muted">
@@ -177,11 +208,65 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
               label="Should trigger"
               value={summary.should_trigger_retraining ? "yes" : "no"}
             />
+            <SummaryItem
+              label="Running job"
+              value={
+                summary.running_job
+                  ? compactId(summary.running_job.retraining_job_id)
+                  : "-"
+              }
+            />
+            <SummaryItem
+              label="Latest job"
+              value={
+                summary.latest_job
+                  ? compactId(summary.latest_job.retraining_job_id)
+                  : "-"
+              }
+            />
           </div>
         ) : (
           <p className="muted">Chưa có summary.</p>
         )}
       </div>
+
+      {isAdmin && jobs.length > 0 && (
+        <div className="panel">
+          <h3>Retraining jobs</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Status</th>
+                  <th>Samples</th>
+                  <th>Candidate</th>
+                  <th>F1</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.slice(0, 5).map((job) => (
+                  <tr key={job.retraining_job_id}>
+                    <td title={job.retraining_job_id}>
+                      {compactId(job.retraining_job_id)}
+                    </td>
+                    <td>
+                      <StatusBadge value={job.status} />
+                    </td>
+                    <td>
+                      {job.training_samples_count}/{job.min_required_samples}
+                    </td>
+                    <td title={job.candidate_model_id ?? ""}>
+                      {compactId(job.candidate_model_id)}
+                    </td>
+                    <td>{job.f1_score ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="review-list">
         {reviews.length === 0 ? (
@@ -216,10 +301,9 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
                     <label className="toggle-row" key={label}>
                       <input
                         checked={Boolean(corrections[review.review_id]?.[label])}
-                        onChange={(event) =>
-                          setCorrection(review.review_id, label, event.target.checked)
-                        }
-                        type="checkbox"
+                        name={`review-${review.review_id}-correct-label`}
+                        onChange={() => selectCorrection(review.review_id, label)}
+                        type="radio"
                       />
                       {label}
                     </label>

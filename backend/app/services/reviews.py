@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.crud.cases import get_case
 from app.crud.reviews import (
     create_case_review,
     create_confirmed_labels,
@@ -21,6 +22,7 @@ from app.ml.labels import DEMO_LABELS
 from app.ml.types import InferenceOutput
 from app.models.case_review import CaseReview
 from app.models.confirmed_label import ConfirmedLabel
+from app.models.enums import ProcessingStatus
 
 REVIEW_STATUS_PENDING = "pending"
 REVIEW_STATUS_CONFIRMED = "confirmed"
@@ -130,6 +132,7 @@ class ReviewService:
         results = list_case_results(self.db, case_id=review.case_id)
         labels = {result.label_name: result.predicted_positive for result in results}
         self._validate_complete_label_set(labels)
+        self._validate_single_positive_label(labels)
         return self._complete_review(
             review,
             labels=labels,
@@ -148,6 +151,7 @@ class ReviewService:
     ) -> CaseReview:
         review = self._get_pending_review(review_id)
         self._validate_complete_label_set(labels)
+        self._validate_single_positive_label(labels)
         return self._complete_review(
             review,
             labels=labels,
@@ -157,7 +161,75 @@ class ReviewService:
         )
 
     def list_training_ready(self) -> list[CaseReview]:
-        return list_training_ready_reviews(self.db)
+        ready: list[CaseReview] = []
+        for review in list_training_ready_reviews(self.db):
+            if review.case is None or review.case.status != ProcessingStatus.COMPLETED:
+                continue
+            if review.case.image is None or not review.case.analysis_results:
+                continue
+            if not review.confirmed_labels:
+                continue
+            if (
+                sum(
+                    1
+                    for label in review.confirmed_labels
+                    if label.confirmed_positive
+                )
+                != 1
+            ):
+                continue
+            ready.append(review)
+        return ready
+
+    def get_review_status_for_case(self, case_id: uuid.UUID) -> CaseReview | None:
+        return get_review_by_case(self.db, case_id=case_id)
+
+    def confirm_case_result(
+        self,
+        case_id: uuid.UUID,
+        *,
+        note: str | None = None,
+        reviewed_by: uuid.UUID | None = None,
+    ) -> CaseReview:
+        review = self._get_or_create_review_for_completed_case(
+            case_id,
+            reason="Doctor/admin manual confirmation for completed case.",
+        )
+        self._ensure_review_can_receive_confirmed_labels(review)
+        results = list_case_results(self.db, case_id=review.case_id)
+        labels = {result.label_name: result.predicted_positive for result in results}
+        self._validate_complete_label_set(labels)
+        self._validate_single_positive_label(labels)
+        return self._complete_review(
+            review,
+            labels=labels,
+            status=REVIEW_STATUS_CONFIRMED,
+            note=note,
+            reviewed_by=reviewed_by,
+        )
+
+    def correct_case_labels(
+        self,
+        case_id: uuid.UUID,
+        *,
+        labels: dict[str, bool],
+        note: str | None = None,
+        reviewed_by: uuid.UUID | None = None,
+    ) -> CaseReview:
+        review = self._get_or_create_review_for_completed_case(
+            case_id,
+            reason="Doctor/admin manual label correction for completed case.",
+        )
+        self._ensure_review_can_receive_confirmed_labels(review)
+        self._validate_complete_label_set(labels)
+        self._validate_single_positive_label(labels)
+        return self._complete_review(
+            review,
+            labels=labels,
+            status=REVIEW_STATUS_CORRECTED,
+            note=note,
+            reviewed_by=reviewed_by,
+        )
 
     def _get_pending_review(self, review_id: uuid.UUID) -> CaseReview:
         review = self.get_review(review_id)
@@ -172,6 +244,44 @@ class ReviewService:
                 status_code=409,
             )
         return review
+
+    def _get_or_create_review_for_completed_case(
+        self,
+        case_id: uuid.UUID,
+        *,
+        reason: str,
+    ) -> CaseReview:
+        case = get_case(self.db, case_id=case_id)
+        if case is None:
+            raise ReviewServiceError("XRayCase not found", status_code=404)
+        if case.status != ProcessingStatus.COMPLETED:
+            raise ReviewServiceError(
+                "Only completed cases can be confirmed or corrected for retraining",
+                status_code=409,
+            )
+        if not case.analysis_results:
+            raise ReviewServiceError(
+                "Completed case has no analysis results to confirm",
+                status_code=409,
+            )
+
+        review = get_review_by_case(self.db, case_id=case_id)
+        if review is None:
+            review = create_case_review(
+                self.db,
+                case_id=case_id,
+                status=REVIEW_STATUS_PENDING,
+                reason=reason,
+            )
+        return review
+
+    @staticmethod
+    def _ensure_review_can_receive_confirmed_labels(review: CaseReview) -> None:
+        if review.status in TRAINING_READY_STATUSES or review.confirmed_labels:
+            raise ReviewServiceError(
+                "Case already has confirmed labels. Reopen/edit workflow is not implemented.",
+                status_code=409,
+            )
 
     def _complete_review(
         self,
@@ -203,6 +313,15 @@ class ReviewService:
         if set(labels) != set(DEMO_LABELS) or len(labels) != len(DEMO_LABELS):
             raise ReviewServiceError(
                 "Labels must include exactly: " + ", ".join(DEMO_LABELS),
+                status_code=422,
+            )
+
+    @staticmethod
+    def _validate_single_positive_label(labels: dict[str, bool]) -> None:
+        positive_count = sum(1 for selected in labels.values() if selected)
+        if positive_count != 1:
+            raise ReviewServiceError(
+                "Exactly one label must be selected for multi-class retraining",
                 status_code=422,
             )
 

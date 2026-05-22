@@ -16,8 +16,9 @@ This is a development and presentation demo. The local model is not clinically c
 - One `AnalysisResult` row per label.
 - Admin model management with candidate registration and promotion by `f1_score`.
 - MLflow Tracking and Model Registry integration for local checkpoint registration.
-- Low-confidence review workflow.
-- Confirmed/corrected labels only become training-ready after doctor/admin review.
+- Review workflow for uncertain cases and manual confirmation/correction for any completed case.
+- Raw AI predictions, including high-confidence predictions, never become training-ready until doctor/admin confirmation.
+- Confirmed/corrected labels only become training-ready after doctor/admin review evidence is stored.
 - Stored-image retrieval, case history/detail, and browser-printable HTML reports.
 - Retraining manifest export from confirmed/corrected labels only.
 - Operations monitoring with Prometheus, Grafana, Loki/Promtail logs, cAdvisor,
@@ -108,7 +109,7 @@ The default Docker Compose ML config expects the local checkpoint at:
 artifacts/models/best_model.pth
 ```
 
-This file is mounted read-only into backend and Celery containers at `/app/artifacts/models/best_model.pth`. It is ignored by Git and is not copied into the Docker image.
+This file is mounted into backend and Celery containers at `/app/artifacts/models/best_model.pth`. It is ignored by Git and is not copied into the Docker image. Retrained candidate checkpoints are also written under `artifacts/models/` and stay ignored by Git.
 
 ## URLs
 
@@ -161,7 +162,8 @@ up{job="postgres-exporter"}
 9. Open model management, register a candidate model, then promote if better.
 10. Open review/MLOps, confirm or correct pending reviews.
 11. Open case history/detail, stored image, and HTML report export.
-12. Open retraining summary, export a manifest if labels have been confirmed/corrected, and view monitoring/Grafana.
+12. Confirm the completed case result or correct the single true label before treating it as training-ready.
+13. Open retraining summary, export a manifest if labels have been confirmed/corrected, trigger retraining when the threshold is reached, and view monitoring/Grafana.
 13. Open Monitoring as Admin and use the infrastructure/log links for Prometheus, Grafana, Loki, Flower, RedisInsight, cAdvisor, MinIO, and MLflow.
 
 ## Product UI Workflow
@@ -172,6 +174,7 @@ Doctor/KTV users see the clinical workflow only:
 - `Phân tích ảnh`: upload and preview image, enter patient metadata, run AI analysis.
 - `Lịch sử ca chụp`: view owned cases, stored image, prediction results, and HTML report.
 - `Ca cần duyệt`: confirm or correct low-confidence labels before they become training-ready.
+- Completed case detail/result screens can also confirm or correct high-confidence AI results; raw predictions are not counted for retraining.
 
 Admin users see operational tools:
 
@@ -197,6 +200,16 @@ npm --prefix frontend run build
 npm --prefix frontend run typecheck
 docker compose exec backend python scripts/celery_smoke_test.py
 curl http://localhost:8000/metrics
+```
+
+Retraining confirmation and trigger checks:
+
+```bash
+# Replace TOKEN and CASE_ID with values from login/analyze or Swagger.
+curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/review-status
+curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/confirm-result
+curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/summary
+curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/trigger
 ```
 
 Manual real-model local inference:
@@ -237,7 +250,7 @@ Windows PowerShell final check:
 - If login fails, run `docker compose exec backend python scripts/seed_demo_users.py`.
 - If analyze says no active model, run `docker compose exec backend python scripts/seed_demo_model.py`.
 - If image upload or worker download fails, check MinIO is running and `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and `MINIO_BUCKET` are configured.
-- If real-model inference fails, confirm `artifacts/models/best_model.pth` exists locally and Docker Compose mounted `./artifacts/models:/app/artifacts/models:ro`.
+- If real-model inference fails, confirm `artifacts/models/best_model.pth` exists locally and Docker Compose mounted `./artifacts/models:/app/artifacts/models`.
 - If MLflow registration fails, confirm MLflow is running at http://localhost:5000 and Docker backend uses `MLFLOW_TRACKING_URI=http://mlflow:5000`.
 - If jobs stay queued, open Flower at http://localhost:5555 and check `docker compose logs -f celery_worker`.
 - If Redis queue state is unclear, open RedisInsight at http://localhost:5540.
@@ -261,5 +274,5 @@ Windows PowerShell final check:
 - The HTML report is browser-printable; PDF generation is not server-side yet.
 - DICOM is not supported yet.
 - The local MobileNetV3-Small checkpoint is a project model for demo/development and is not clinically certified.
-- No real retraining happens without confirmed datasets and real model weights.
+- Retraining only uses cases with stored confirmation evidence in `confirmed_labels`; raw AI predictions are excluded even when high-confidence.
 - Grafana includes demo dashboards and Loki log views; this is still a local development observability stack, not a production SRE setup.

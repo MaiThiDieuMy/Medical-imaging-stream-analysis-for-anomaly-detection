@@ -26,6 +26,7 @@ from app.models.confirmed_label import ConfirmedLabel
 from app.models.enums import ProcessingStatus
 from app.models.patient import Patient
 from app.models.xray_case import XRayCase
+from app.models.xray_image import XRayImage
 from app.schemas.admin import AIModelCreate, CandidateModelCreate
 from app.services.mlops import MLOpsService
 from app.services.model_admin import ModelAdminService, ModelAdminServiceError
@@ -93,6 +94,15 @@ def _create_case_with_results(
     case = XRayCase(patient=patient, status=ProcessingStatus.COMPLETED)
     db.add(case)
     db.flush()
+    db.add(
+        XRayImage(
+            case_id=case.case_id,
+            file_name="demo.png",
+            image_path=f"demo://{case.case_id}.png",
+            image_hash=uuid.uuid4().hex,
+            file_format="png",
+        )
+    )
     for label_name, probability in zip(DEMO_LABELS, probabilities, strict=True):
         db.add(
             AnalysisResult(
@@ -212,7 +222,7 @@ def test_corrected_review_creates_confirmed_labels(db_session: Session) -> None:
     corrections = {
         "No Finding": True,
         "Effusion": False,
-        "Infiltration": True,
+        "Infiltration": False,
         "Atelectasis": False,
     }
 
@@ -267,7 +277,12 @@ def test_retraining_summary_counts_confirmed_and_corrected_only(
     assert review_two is not None
     ReviewService(db_session).correct_review(
         review_two.review_id,
-        labels={label: False for label in DEMO_LABELS},
+        labels={
+            "No Finding": False,
+            "Effusion": True,
+            "Infiltration": False,
+            "Atelectasis": False,
+        },
     )
 
     case_three = _create_case_with_results(db_session)

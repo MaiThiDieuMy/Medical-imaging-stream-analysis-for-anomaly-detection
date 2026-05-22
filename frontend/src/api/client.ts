@@ -6,6 +6,7 @@ import type {
   CaseListItem,
   CaseResultsResponse,
   CaseReview,
+  CaseReviewStatusResponse,
   CaseStatusResponse,
   JobStatusResponse,
   LabelCorrection,
@@ -19,6 +20,7 @@ import type {
   ManifestExportResponse,
   PromoteModelResponse,
   RetrainingCheckResponse,
+  RetrainingJob,
   RetrainingSummary,
   TrainingReadySample,
   UserPayload,
@@ -199,6 +201,32 @@ export function getCaseResults(caseId: string): Promise<CaseResultsResponse> {
   return requestJson<CaseResultsResponse>(`/cases/${caseId}/results`);
 }
 
+export function getCaseReviewStatus(
+  caseId: string,
+): Promise<CaseReviewStatusResponse> {
+  return requestJson<CaseReviewStatusResponse>(`/cases/${caseId}/review-status`);
+}
+
+export function confirmCaseResult(
+  caseId: string,
+): Promise<CaseReviewStatusResponse> {
+  return requestJson<CaseReviewStatusResponse>(`/cases/${caseId}/confirm-result`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+export function correctCaseLabels(
+  caseId: string,
+  labels: LabelCorrection[],
+  note?: string,
+): Promise<CaseReviewStatusResponse> {
+  return requestJson<CaseReviewStatusResponse>(`/cases/${caseId}/correct-labels`, {
+    method: "POST",
+    body: { labels, note },
+  });
+}
+
 export function listCases(): Promise<CaseListItem[]> {
   return requestJson<CaseListItem[]>("/cases");
 }
@@ -322,6 +350,17 @@ export function getRetrainingSamples(): Promise<TrainingReadySample[]> {
 export function checkRetraining(): Promise<RetrainingCheckResponse> {
   return requestJson<RetrainingCheckResponse>("/admin/mlops/retraining/check", {
     method: "POST",
+  });
+}
+
+export function listRetrainingJobs(): Promise<RetrainingJob[]> {
+  return requestJson<RetrainingJob[]>("/admin/mlops/retraining/jobs");
+}
+
+export function triggerRetraining(): Promise<RetrainingJob> {
+  return requestJson<RetrainingJob>("/admin/mlops/retraining/trigger", {
+    method: "POST",
+    body: {},
   });
 }
 

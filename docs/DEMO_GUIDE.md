@@ -45,11 +45,14 @@ Development/demo credentials:
 8. Explain that the backend validates the file, computes `image_hash`, and checks cache before uploading to MinIO or creating a job.
 9. On cache miss, show queued/processing/completed status.
 10. Show four labels: No Finding, Effusion, Infiltration, Atelectasis.
-11. Open `Lịch sử ca chụp`, view stored image, case detail, and click `Xuất báo cáo`.
+11. Confirm the AI result or correct the single true label if this case should enter the retraining buffer.
+12. Open `Lịch sử ca chụp`, view stored image, case detail, and click `Xuất báo cáo`.
 
 What to say:
 
 > AI analysis is triggered only after the user clicks Analyze. Cache lookup happens before saving duplicate images or creating a Celery job.
+
+> Raw AI predictions are never training labels by themselves. High-confidence and low-confidence cases both require doctor/admin confirmation or correction before retraining.
 
 ## 3. Cache Hit Proof
 
@@ -96,13 +99,14 @@ What to say:
 1. Open `Duyệt/gán nhãn lại`.
 2. Show pending reviews if available.
 3. Confirm AI labels or correct the four labels.
-4. Explain that pending reviews are not training-ready.
+4. Explain that pending reviews and raw high-confidence AI predictions are not training-ready.
 5. Show retraining summary and training-ready case counts.
-6. Export retraining manifest and explain that only confirmed/corrected labels are included.
+6. Export retraining manifest and explain that only confirmed/corrected labels with stored confirmation evidence are included.
+7. Trigger retraining only after the configured confirmed-sample threshold is reached.
 
 What to say:
 
-> AI predictions are not used as training labels until a doctor/admin confirms or corrects them.
+> AI predictions are not used as training labels until a doctor/admin confirms or corrects them, regardless of confidence.
 
 ## 6. Case Detail And Archive Safety
 
@@ -159,5 +163,5 @@ Mention these limitations clearly:
 - Case report export is HTML suitable for browser print/save-as-PDF.
 - DICOM is not supported yet.
 - MLflow registration logs checkpoint artifacts; it does not retrain the model.
-- No real retraining happens without confirmed datasets and real model weights.
+- Retraining only uses cases with stored confirmation evidence in `confirmed_labels`; raw AI predictions are excluded even when high-confidence.
 - Do not commit real patient data, sample images, model weights, or `.env`.

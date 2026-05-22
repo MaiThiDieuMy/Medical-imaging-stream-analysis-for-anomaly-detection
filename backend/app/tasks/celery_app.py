@@ -9,6 +9,7 @@ celery_app = Celery(
     include=[
         "app.tasks.health",
         "app.tasks.inference",
+        "app.tasks.retraining",
     ],
 )
 

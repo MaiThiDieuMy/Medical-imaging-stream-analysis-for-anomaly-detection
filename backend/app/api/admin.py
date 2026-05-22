@@ -23,6 +23,7 @@ from app.schemas.admin import (
     MLflowRunsResponse,
     PromoteModelResponse,
     RetrainingCheckResponse,
+    RetrainingJobResponse,
     RetrainingSummaryResponse,
     ReviewConfirmRequest,
     ReviewCorrectRequest,
@@ -31,6 +32,7 @@ from app.schemas.admin import (
 from app.schemas.users import UserCreate, UserResponse, UserUpdate
 from app.services.mlops import MLOpsService
 from app.services.model_admin import ModelAdminService, ModelAdminServiceError
+from app.services.retraining import RetrainingService, RetrainingServiceError
 from app.services.reviews import ReviewService, ReviewServiceError
 from app.services.users import UserService, UserServiceError
 
@@ -46,6 +48,10 @@ def _review_error_to_http(exc: ReviewServiceError) -> HTTPException:
 
 
 def _user_error_to_http(exc: UserServiceError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _retraining_error_to_http(exc: RetrainingServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
@@ -305,6 +311,53 @@ def check_retraining(
     _current_user: User = Depends(require_admin),
 ) -> RetrainingCheckResponse:
     return RetrainingCheckResponse(**MLOpsService(db).retraining_check())
+
+
+@router.get(
+    "/mlops/retraining/jobs",
+    response_model=list[RetrainingJobResponse],
+)
+def list_retraining_jobs(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> list[RetrainingJobResponse]:
+    return RetrainingService(db).list_jobs()
+
+
+@router.get(
+    "/mlops/retraining/jobs/{retraining_job_id}",
+    response_model=RetrainingJobResponse,
+)
+def get_retraining_job(
+    retraining_job_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> RetrainingJobResponse:
+    try:
+        return RetrainingService(db).get_job(retraining_job_id)
+    except RetrainingServiceError as exc:
+        raise _retraining_error_to_http(exc) from exc
+
+
+@router.post(
+    "/mlops/retraining/trigger",
+    response_model=RetrainingJobResponse,
+)
+def trigger_retraining(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> RetrainingJobResponse:
+    try:
+        service = RetrainingService(db)
+        job = service.create_retraining_job(triggered_by=current_user.user_id)
+        from app.tasks.retraining import fine_tune_model
+
+        fine_tune_model.delay(str(job.retraining_job_id))
+    except RetrainingServiceError as exc:
+        raise _retraining_error_to_http(exc) from exc
+    response.status_code = 202
+    return job
 
 
 @router.post(
