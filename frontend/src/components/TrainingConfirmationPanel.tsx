@@ -74,12 +74,6 @@ export function TrainingConfirmationPanel({
     };
   }, [caseId, completed]);
 
-  async function refreshStatus() {
-    const status = await getCaseReviewStatus(caseId);
-    setReviewStatus(status);
-    onUpdated?.();
-  }
-
   async function handleConfirm() {
     setError(null);
     setMessage(null);
@@ -87,7 +81,9 @@ export function TrainingConfirmationPanel({
       setLoading(true);
       const status = await confirmCaseResult(caseId);
       setReviewStatus(status);
-      setMessage("Đã xác nhận kết quả AI. Ca này đã có bằng chứng để đưa vào retraining.");
+      setMessage(
+        "Đã xác nhận kết quả AI là đúng. Ca này được đưa vào dữ liệu training-ready.",
+      );
       onUpdated?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không xác nhận được kết quả.");
@@ -107,7 +103,9 @@ export function TrainingConfirmationPanel({
       }));
       const status = await correctCaseLabels(caseId, labels);
       setReviewStatus(status);
-      setMessage("Đã lưu nhãn đã sửa. Ca này đã có bằng chứng để đưa vào retraining.");
+      setMessage(
+        "Đã lưu nhãn bác sĩ chọn. Ca này được đưa vào dữ liệu training-ready.",
+      );
       onUpdated?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không lưu được nhãn đã sửa.");
@@ -125,16 +123,16 @@ export function TrainingConfirmationPanel({
   }
 
   return (
-    <div className="correction-box">
+    <div className="clinical-review-box">
       <div className="section-heading">
         <div>
-          <h4>Xác nhận dữ liệu retraining</h4>
+          <h4>Xác nhận dữ liệu huấn luyện</h4>
           <p className="muted">
-            Kể cả dự đoán AI có độ tin cậy cao, ca chỉ training-ready sau khi
-            bác sĩ/admin xác nhận hoặc sửa nhãn.
+            Chỉ xác nhận khi bác sĩ/KTV đã xem kết quả. Dữ liệu đã xác nhận mới
+            được tính cho retraining.
           </p>
         </div>
-        <StatusBadge value={reviewStatus?.status ?? "no_review"} />
+        <StatusBadge value={reviewStatus?.status ?? "chưa xác nhận"} />
       </div>
 
       {error && <Message tone="error">{error}</Message>}
@@ -143,7 +141,7 @@ export function TrainingConfirmationPanel({
       {trainingReady ? (
         <div>
           <Message tone="success">
-            Ca {compactId(caseId)} đã có confirmed_labels và được tính vào
+            Ca {compactId(caseId)} đã có nhãn xác nhận và được tính vào
             retraining buffer.
           </Message>
           <div className="toggle-grid">
@@ -158,28 +156,24 @@ export function TrainingConfirmationPanel({
       ) : (
         <>
           <Message tone="warning">
-            Raw AI predictions chưa được tính là dữ liệu huấn luyện. Hãy xác nhận
-            nếu đồng ý với AI, hoặc chọn một nhãn đúng để sửa.
+            Kết quả AI thô chưa phải dữ liệu huấn luyện. Chọn một trong hai hành
+            động bên dưới sau khi đã đối chiếu ảnh và kết quả.
           </Message>
-          <div className="review-actions">
+          <div className="decision-actions">
             <button
               className="primary"
               disabled={loading}
               onClick={() => void handleConfirm()}
               type="button"
             >
-              Xác nhận kết quả AI
+              Xác nhận AI đúng
             </button>
-            <button
-              disabled={loading}
-              onClick={() => void refreshStatus()}
-              type="button"
-            >
-              Cập nhật trạng thái
-            </button>
+            <span className="action-note">
+              Dùng khi toàn bộ nhãn AI phù hợp với đánh giá của bác sĩ.
+            </span>
           </div>
           <div className="correction-box">
-            <h4>Sửa nhãn đúng</h4>
+            <h4>Hoặc chọn nhãn đúng để sửa</h4>
             <div className="toggle-grid">
               {demoLabels.map((label) => (
                 <label className="toggle-row" key={label}>
@@ -194,7 +188,7 @@ export function TrainingConfirmationPanel({
               ))}
             </div>
             <button disabled={loading} onClick={() => void handleCorrect()} type="button">
-              Lưu nhãn đã sửa
+              Lưu nhãn bác sĩ chọn
             </button>
           </div>
         </>

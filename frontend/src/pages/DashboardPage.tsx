@@ -63,27 +63,37 @@ export function DashboardPage({ currentUser, onNavigate }: DashboardPageProps) {
     () => cases.filter((item) => ["queued", "processing"].includes(item.status)).length,
     [cases],
   );
+  const failedCases = useMemo(
+    () => cases.filter((item) => item.status === "failed").length,
+    [cases],
+  );
 
   return (
     <section className="page">
-      <div className="page-header">
+      <div className="dashboard-hero">
         <div>
+          <span className="eyebrow">{isAdmin ? "Admin operations" : "Clinical workspace"}</span>
           <h2>Hệ thống phân tích ảnh X-quang lồng ngực</h2>
           <p>
             {isAdmin
-              ? "Bảng tổng quan cho quản trị vận hành, mô hình, người dùng và ca cần duyệt."
-              : "Bảng tổng quan cho Bác sĩ/KTV theo dõi ca đã upload và ca cần xác nhận nhãn."}
+              ? "Theo dõi sức khỏe hệ thống, hàng đợi inference, review cần xử lý và model đang hoạt động."
+              : "Theo dõi ca đã upload, mở nhanh lịch sử và xác nhận nhãn sau khi AI hoàn tất."}
           </p>
         </div>
-        <StatusBadge value={isAdmin ? monitoring?.backend_status ?? "admin" : "doctor"} />
+        <div className="hero-status">
+          <StatusBadge value={isAdmin ? monitoring?.backend_status ?? "admin" : "doctor"} />
+          <strong>{currentUser.full_name}</strong>
+          <span>{isAdmin ? "Quản trị viên" : "Bác sĩ/KTV"}</span>
+        </div>
       </div>
 
       {error && <Message tone="error">{error}</Message>}
 
-      <div className="summary-grid">
+      <div className="summary-grid dashboard-kpis">
         <SummaryItem label={isAdmin ? "Tổng ca chụp" : "Ca của tôi"} value={cases.length} />
         <SummaryItem label="Đã hoàn tất" value={completedCases} />
         <SummaryItem label="Đang xử lý" value={processingCases} />
+        <SummaryItem label="Thất bại" value={failedCases} />
         <SummaryItem label="Ca cần duyệt" value={reviews.length} />
         {isAdmin && (
           <>
@@ -92,61 +102,186 @@ export function DashboardPage({ currentUser, onNavigate }: DashboardPageProps) {
               label="Training-ready"
               value={monitoring?.training_ready_cases ?? "-"}
             />
-            <SummaryItem label="Redis" value={monitoring?.redis_broker_status ?? "-"} />
+            <SummaryItem
+              label="Queue"
+              value={monitoring?.celery_queue_length ?? "unknown"}
+            />
           </>
         )}
       </div>
 
-      <div className="split-layout">
+      {isAdmin ? (
+        <AdminDashboard
+          monitoring={monitoring}
+          onNavigate={onNavigate}
+          recentCases={cases.slice(0, 6)}
+          reviews={reviews}
+        />
+      ) : (
+        <DoctorDashboard
+          onNavigate={onNavigate}
+          recentCases={cases.slice(0, 5)}
+          reviews={reviews}
+        />
+      )}
+    </section>
+  );
+}
+
+function DoctorDashboard({
+  onNavigate,
+  recentCases,
+  reviews,
+}: {
+  onNavigate: (page: PageKey) => void;
+  recentCases: CaseListItem[];
+  reviews: CaseReview[];
+}) {
+  return (
+    <div className="split-layout">
+      <div className="panel action-panel">
+        <h3>Luồng làm việc hôm nay</h3>
+        <p className="muted">
+          Bắt đầu bằng phân tích ảnh mới, sau đó mở lịch sử để xác nhận kết quả.
+        </p>
+        <div className="quick-actions">
+          <button className="primary" onClick={() => onNavigate("analyze")} type="button">
+            Phân tích ảnh mới
+          </button>
+          <button onClick={() => onNavigate("cases")} type="button">
+            Mở lịch sử ca
+          </button>
+          <button onClick={() => onNavigate("reviews")} type="button">
+            Duyệt {reviews.length} ca cần xác nhận
+          </button>
+        </div>
+      </div>
+
+      <RecentCasesPanel cases={recentCases} />
+    </div>
+  );
+}
+
+function AdminDashboard({
+  monitoring,
+  onNavigate,
+  recentCases,
+  reviews,
+}: {
+  monitoring: MonitoringSummary | null;
+  onNavigate: (page: PageKey) => void;
+  recentCases: CaseListItem[];
+  reviews: CaseReview[];
+}) {
+  return (
+    <>
+      <div className="admin-grid">
         <div className="panel">
           <div className="section-heading">
-            <h3>{isAdmin ? "Vận hành hệ thống" : "Luồng làm việc"}</h3>
+            <div>
+              <h3>Sức khỏe hệ thống</h3>
+              <p className="muted">Tín hiệu vận hành chính từ backend và queue.</p>
+            </div>
+            <button onClick={() => onNavigate("monitoring")} type="button">
+              Mở monitoring
+            </button>
           </div>
-          <div className="quick-actions">
-            {!isAdmin && (
-              <button className="primary" onClick={() => onNavigate("analyze")} type="button">
-                Phân tích ảnh
-              </button>
-            )}
-            <button onClick={() => onNavigate("cases")} type="button">
-              {isAdmin ? "Xem tất cả ca chụp" : "Xem lịch sử ca"}
-            </button>
-            <button onClick={() => onNavigate("reviews")} type="button">
-              Duyệt/gán nhãn lại
-            </button>
-            {isAdmin && (
-              <>
-                <button onClick={() => onNavigate("users")} type="button">
-                  Quản lý người dùng
-                </button>
-                <button onClick={() => onNavigate("models")} type="button">
-                  Quản lý mô hình
-                </button>
-                <button onClick={() => onNavigate("monitoring")} type="button">
-                  Monitoring
-                </button>
-              </>
-            )}
+          <div className="health-list">
+            <HealthItem label="Backend" value={monitoring?.backend_status ?? "unknown"} />
+            <HealthItem
+              label="Database"
+              value={monitoring?.database_reachable ? "ok" : "unreachable"}
+            />
+            <HealthItem label="Redis" value={monitoring?.redis_broker_status ?? "unknown"} />
+            <HealthItem
+              label="Celery queue"
+              value={String(monitoring?.celery_queue_length ?? "unknown")}
+            />
           </div>
         </div>
 
         <div className="panel">
-          <h3>Ca gần đây</h3>
-          <div className="status-table">
-            {cases.slice(0, 5).map((item) => (
-              <div key={item.case_id}>
-                <span title={item.case_id}>
-                  {item.patient_name} ({compactId(item.case_id)})
-                </span>
-                <StatusBadge value={item.status} />
-                <strong>{item.review_status ?? "-"}</strong>
-              </div>
-            ))}
-            {cases.length === 0 && <p className="muted">Chưa có ca chụp.</p>}
+          <div className="section-heading">
+            <div>
+              <h3>Model đang hoạt động</h3>
+              <p className="muted">Model dùng cho các ca inference mới.</p>
+            </div>
+            <button onClick={() => onNavigate("models")} type="button">
+              Quản lý model
+            </button>
           </div>
+          {monitoring?.active_model ? (
+            <dl className="detail-list compact">
+              <div>
+                <dt>Name</dt>
+                <dd>{monitoring.active_model.model_name}</dd>
+              </div>
+              <div>
+                <dt>Version</dt>
+                <dd>{monitoring.active_model.version}</dd>
+              </div>
+              <div>
+                <dt>F1</dt>
+                <dd>{monitoring.active_model.f1_score ?? "-"}</dd>
+              </div>
+            </dl>
+          ) : (
+            <Message tone="warning">Chưa có active model. Hãy seed hoặc kích hoạt model.</Message>
+          )}
         </div>
       </div>
-    </section>
+
+      <div className="split-layout">
+        <div className="panel action-panel">
+          <h3>Việc cần xử lý</h3>
+          <p className="muted">
+            Ưu tiên review các ca chưa xác nhận trước khi export manifest hoặc retraining.
+          </p>
+          <div className="quick-actions">
+            <button className="primary" onClick={() => onNavigate("reviews")} type="button">
+              Duyệt {reviews.length} ca cần xác nhận
+            </button>
+            <button onClick={() => onNavigate("cases")} type="button">
+              Xem tất cả ca
+            </button>
+            <button onClick={() => onNavigate("users")} type="button">
+              Quản lý người dùng
+            </button>
+          </div>
+        </div>
+
+        <RecentCasesPanel cases={recentCases} />
+      </div>
+    </>
+  );
+}
+
+function RecentCasesPanel({ cases }: { cases: CaseListItem[] }) {
+  return (
+    <div className="panel">
+      <h3>Ca gần đây</h3>
+      <div className="status-table">
+        {cases.map((item) => (
+          <div key={item.case_id}>
+            <span title={item.case_id}>
+              {item.patient_name} ({compactId(item.case_id)})
+            </span>
+            <StatusBadge value={item.status} />
+            <strong>{item.review_status ?? "Chưa xác nhận"}</strong>
+          </div>
+        ))}
+        {cases.length === 0 && <p className="muted">Chưa có ca chụp.</p>}
+      </div>
+    </div>
+  );
+}
+
+function HealthItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="health-item">
+      <span>{label}</span>
+      <StatusBadge value={value} />
+    </div>
   );
 }
 

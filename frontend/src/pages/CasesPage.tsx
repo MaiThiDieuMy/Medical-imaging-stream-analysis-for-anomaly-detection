@@ -32,9 +32,6 @@ export function CasesPage({ role }: CasesPageProps) {
     try {
       const loadedCases = role === "admin" ? await listCases() : await listMyCases();
       setCases(loadedCases);
-      if (!selectedCase && loadedCases.length > 0) {
-        await selectCase(loadedCases[0].case_id);
-      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không tải được danh sách ca.");
     } finally {
@@ -77,7 +74,11 @@ export function CasesPage({ role }: CasesPageProps) {
   }
 
   async function handleArchive(caseId: string) {
-    if (!window.confirm("Lưu trữ ca chụp này? Dữ liệu và kết quả vẫn được giữ trong hệ thống.")) {
+    if (
+      !window.confirm(
+        "Ẩn ca này khỏi danh sách chính? Dữ liệu, ảnh và kết quả vẫn được giữ trong hệ thống.",
+      )
+    ) {
       return;
     }
     setError(null);
@@ -85,7 +86,7 @@ export function CasesPage({ role }: CasesPageProps) {
     try {
       const archived = await archiveCase(caseId);
       setSelectedCase(archived);
-      setMessage("Đã lưu trữ ca chụp. Danh sách chính sẽ không hiển thị ca này nữa.");
+      setMessage("Đã lưu trữ ca chụp. Ca này không còn xuất hiện trong danh sách chính.");
       await refreshCases();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không lưu trữ được ca chụp.");
@@ -108,35 +109,41 @@ export function CasesPage({ role }: CasesPageProps) {
           <h2>{role === "admin" ? "Tất cả ca chụp" : "Lịch sử ca chụp"}</h2>
           <p>
             {role === "admin"
-              ? "Quản trị viên xem được toàn bộ ca trong hệ thống."
-              : "Bác sĩ/KTV chỉ xem các ca do chính mình upload."}
+              ? "Quản trị viên xem được toàn bộ ca trong hệ thống và có thể lưu trữ ca đã xử lý."
+              : "Chọn một ca trong danh sách để xem ảnh, kết quả AI và trạng thái xác nhận."}
           </p>
         </div>
         <button disabled={loading} onClick={() => void refreshCases()} type="button">
-          {loading ? "Đang tải..." : "Refresh"}
+          {loading ? "Đang tải..." : "Tải lại danh sách"}
         </button>
       </div>
 
       {error && <Message tone="error">{error}</Message>}
       {message && <Message tone="success">{message}</Message>}
 
-      <div className="split-layout">
+      <div className="worklist-layout">
         <div className="panel">
-          <h3>Danh sách ca</h3>
+          <div className="section-heading">
+            <h3>Danh sách ca</h3>
+            <span className="count-pill">{cases.length} ca</span>
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Case</th>
                   <th>Bệnh nhân</th>
-                  <th>Status</th>
-                  <th>Review</th>
-                  <th>Action</th>
+                  <th>Trạng thái</th>
+                  <th>Xác nhận</th>
+                  <th>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {cases.map((item) => (
-                  <tr key={item.case_id}>
+                  <tr
+                    className={selectedCase?.case_id === item.case_id ? "selected-row" : ""}
+                    key={item.case_id}
+                  >
                     <td title={item.case_id}>{compactId(item.case_id)}</td>
                     <td>
                       {item.patient_name}
@@ -145,21 +152,23 @@ export function CasesPage({ role }: CasesPageProps) {
                     <td>
                       <StatusBadge value={item.status} />
                     </td>
-                    <td>{item.review_status ?? "-"}</td>
+                    <td>{item.review_status ?? "Chưa xác nhận"}</td>
                     <td>
                       <div className="actions">
                         <button
+                          className="primary"
                           onClick={() => void selectCase(item.case_id)}
                           type="button"
                         >
-                          Xem
+                          Mở chi tiết
                         </button>
                         {role === "admin" && (
                           <button
+                            className="danger"
                             onClick={() => void handleArchive(item.case_id)}
                             type="button"
                           >
-                            Lưu trữ
+                            Lưu trữ ca
                           </button>
                         )}
                       </div>
@@ -176,16 +185,19 @@ export function CasesPage({ role }: CasesPageProps) {
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel case-detail-panel">
           {selectedCase ? (
             <>
               <div className="section-heading">
-                <h3>Chi tiết ca {compactId(selectedCase.case_id)}</h3>
+                <div>
+                  <h3>Chi tiết ca {compactId(selectedCase.case_id)}</h3>
+                  <p className="muted">{selectedCase.patient.full_name}</p>
+                </div>
                 <button
                   onClick={() => void openReport(selectedCase.case_id)}
                   type="button"
                 >
-                  Xuất báo cáo
+                  Xuất báo cáo HTML
                 </button>
               </div>
               {imageUrl ? (
@@ -204,7 +216,7 @@ export function CasesPage({ role }: CasesPageProps) {
                   </dd>
                 </div>
                 <div>
-                  <dt>Status</dt>
+                  <dt>Trạng thái</dt>
                   <dd>
                     <StatusBadge value={selectedCase.status} />
                   </dd>
@@ -214,12 +226,12 @@ export function CasesPage({ role }: CasesPageProps) {
                   <dd>{selectedCase.model_version ?? "-"}</dd>
                 </div>
                 <div>
-                  <dt>Review</dt>
-                  <dd>{selectedCase.review_status ?? "-"}</dd>
+                  <dt>Xác nhận</dt>
+                  <dd>{selectedCase.review_status ?? "Chưa xác nhận"}</dd>
                 </div>
                 <div>
                   <dt>Lưu trữ</dt>
-                  <dd>{selectedCase.archived_at ?? "-"}</dd>
+                  <dd>{selectedCase.archived_at ?? "Chưa lưu trữ"}</dd>
                 </div>
                 <div>
                   <dt>File</dt>
@@ -237,7 +249,13 @@ export function CasesPage({ role }: CasesPageProps) {
               )}
             </>
           ) : (
-            <p className="muted">Chọn một ca để xem chi tiết.</p>
+            <div className="empty-state">
+              <strong>Chưa chọn ca</strong>
+              <p>
+                Nhấn “Mở chi tiết” ở một ca trong danh sách để xem ảnh, kết quả
+                AI và hành động xác nhận.
+              </p>
+            </div>
           )}
         </div>
       </div>

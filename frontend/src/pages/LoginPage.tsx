@@ -39,7 +39,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </div>
         <div>
           <h2>Đăng nhập</h2>
-          <p className="muted">Đăng nhập bằng tài khoản Bác sĩ/KTV hoặc Quản trị viên.</p>
+          <p className="muted">
+            Đăng nhập bằng tài khoản Bác sĩ/KTV hoặc Quản trị viên.
+          </p>
         </div>
         {error && <Message tone="error">{error}</Message>}
         <label>

@@ -6,5 +6,9 @@ type MessageProps = {
 };
 
 export function Message({ tone = "info", children }: MessageProps) {
-  return <div className={`message ${tone}`}>{children}</div>;
+  return (
+    <div className={`message ${tone}`} role={tone === "error" ? "alert" : "status"}>
+      {children}
+    </div>
+  );
 }

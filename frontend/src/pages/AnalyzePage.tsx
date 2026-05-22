@@ -1,5 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { analyzeImage, getCaseResults, getJobStatus } from "../api/client";
+import {
+  analyzeImage,
+  getCaseResults,
+  getJobStatus,
+  listMyCases,
+} from "../api/client";
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
 import { StatusBadge } from "../components/StatusBadge";
@@ -7,6 +12,7 @@ import { TrainingConfirmationPanel } from "../components/TrainingConfirmationPan
 import type {
   AnalyzeFormValues,
   AnalyzeResponse,
+  CaseListItem,
   CaseResultsResponse,
   JobStatusResponse,
 } from "../types/api";
@@ -21,12 +27,22 @@ const initialValues: AnalyzeFormValues = {
   note: "",
 };
 
+const departments = [
+  "Cấp cứu",
+  "Chẩn đoán hình ảnh",
+  "Hô hấp",
+  "Nội tổng quát",
+  "Ngoại trú",
+  "ICU",
+];
+
 type AnalyzePageProps = {
   onOpenCases?: () => void;
 };
 
 export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
   const [values, setValues] = useState<AnalyzeFormValues>(initialValues);
+  const [knownCases, setKnownCases] = useState<CaseListItem[]>([]);
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [response, setResponse] = useState<AnalyzeResponse | null>(null);
@@ -40,7 +56,26 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     () => caseResults?.results ?? response?.results ?? [],
     [caseResults, response],
   );
-  const currentCaseStatus = String(caseResults?.status ?? jobStatus?.status ?? response?.status ?? "");
+  const currentCaseStatus = String(
+    caseResults?.status ?? jobStatus?.status ?? response?.status ?? "",
+  );
+  const matchingPatientCases = useMemo(() => {
+    const patientCode = values.patient_code.trim().toLowerCase();
+    if (!patientCode) {
+      return [];
+    }
+    return knownCases.filter(
+      (item) => item.patient_code.toLowerCase() === patientCode,
+    );
+  }, [knownCases, values.patient_code]);
+
+  useEffect(() => {
+    listMyCases()
+      .then(setKnownCases)
+      .catch(() => {
+        setKnownCases([]);
+      });
+  }, []);
 
   useEffect(() => {
     if (!image) {
@@ -114,7 +149,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     setCaseResults(null);
 
     if (!values.patient_code.trim() || !values.full_name.trim() || !values.gender.trim()) {
-      setError("Vui lòng nhập patient_code, full_name và gender.");
+      setError("Vui lòng nhập mã bệnh nhân, họ tên và giới tính.");
       return;
     }
     if (!image) {
@@ -139,6 +174,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
           results: analyzeResponse.results,
         });
       }
+      listMyCases().then(setKnownCases).catch(() => undefined);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không gửi được yêu cầu.");
     } finally {
@@ -150,23 +186,41 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     <section className="page">
       <div className="page-header">
         <div>
-          <h2>Phân tích X-quang ngực</h2>
-          <p>Bác sĩ/KTV nhập metadata và bấm Phân tích AI khi cần chạy AI.</p>
+          <h2>Phân tích ảnh X-quang</h2>
+          <p>
+            Tạo ca mới, kiểm tra thông tin bệnh nhân và gửi ảnh vào hàng đợi AI.
+          </p>
         </div>
-        <StatusBadge value={jobStatus?.status ?? response?.status ?? "ready"} />
+        <StatusBadge value={jobStatus?.status ?? response?.status ?? "sẵn sàng"} />
       </div>
 
-      <div className="split-layout">
-        <form className="panel form-grid" onSubmit={handleSubmit}>
+      <div className="analysis-layout">
+        <form className="panel form-grid analysis-form" onSubmit={handleSubmit}>
+          <div className="form-section span-2">
+            <span className="step-badge">1</span>
+            <div>
+              <h3>Thông tin bệnh nhân</h3>
+              <p className="muted">
+                Mã bệnh nhân được dùng để đối chiếu lịch sử ca đã upload.
+              </p>
+            </div>
+          </div>
           <label>
-            Patient code
+            Mã bệnh nhân
             <input
+              className={matchingPatientCases.length > 0 ? "input-warning" : ""}
               onChange={(event) =>
                 setValues({ ...values, patient_code: event.target.value })
               }
               required
               value={values.patient_code}
             />
+            {matchingPatientCases.length > 0 && (
+              <small className="field-hint warning-text">
+                Đã có {matchingPatientCases.length} ca với mã này. Hãy kiểm tra
+                đúng bệnh nhân trước khi gửi ảnh mới.
+              </small>
+            )}
           </label>
           <label>
             Họ tên
@@ -180,13 +234,18 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
           </label>
           <label>
             Giới tính
-            <input
+            <select
               onChange={(event) =>
                 setValues({ ...values, gender: event.target.value })
               }
               required
               value={values.gender}
-            />
+            >
+              <option value="">Chọn giới tính</option>
+              <option value="Nam">Nam</option>
+              <option value="Nữ">Nữ</option>
+              <option value="Khác">Khác</option>
+            </select>
           </label>
           <label>
             Năm sinh
@@ -202,23 +261,39 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
           </label>
           <label>
             Khoa/phòng
-            <input
+            <select
               onChange={(event) =>
                 setValues({ ...values, department: event.target.value })
               }
               value={values.department}
-            />
+            >
+              <option value="">Chọn khoa/phòng</option>
+              {departments.map((department) => (
+                <option key={department} value={department}>
+                  {department}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="span-2">
-            Ghi chú
+            Ghi chú lâm sàng
             <textarea
               onChange={(event) =>
                 setValues({ ...values, note: event.target.value })
               }
+              placeholder="Ví dụ: sốt, ho kéo dài, nghi tràn dịch..."
               rows={3}
               value={values.note}
             />
           </label>
+
+          <div className="form-section span-2">
+            <span className="step-badge">2</span>
+            <div>
+              <h3>Ảnh cần phân tích</h3>
+              <p className="muted">Hỗ trợ PNG/JPG. Không tải lên dữ liệu bệnh nhân thật trong môi trường demo.</p>
+            </div>
+          </div>
           <label className="span-2">
             Ảnh X-quang
             <input
@@ -228,13 +303,16 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
               type="file"
             />
           </label>
-          <button className="primary span-2" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Đang gửi..." : "Phân tích AI"}
+          <button className="primary span-2 submit-button" disabled={isSubmitting} type="submit">
+            {isSubmitting ? "Đang gửi ảnh vào hàng đợi..." : "Gửi ảnh để AI phân tích"}
           </button>
         </form>
 
         <div className="panel">
-          <h3>Ảnh đã chọn</h3>
+          <div className="section-heading">
+            <h3>Preview và kết quả</h3>
+            <StatusBadge value={isPolling ? "đang xử lý" : response?.status ?? "chưa gửi"} />
+          </div>
           {previewUrl ? (
             <div className="image-preview">
               <img alt="Ảnh X-quang được chọn để phân tích" src={previewUrl} />
@@ -257,14 +335,13 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
             </div>
           </dl>
 
-          <h3>Trạng thái</h3>
           {error && <Message tone="error">{error}</Message>}
           {response?.cache_hit && (
             <Message tone="success">
               Kết quả được lấy từ cache, không tạo job mới.
             </Message>
           )}
-          {isPolling && <Message>Đang cập nhật trạng thái job...</Message>}
+          {isPolling && <Message>AI đang xử lý. Kết quả sẽ tự cập nhật khi hoàn tất.</Message>}
           <dl className="detail-list">
             <div>
               <dt>Cache hit</dt>
@@ -285,18 +362,20 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
               <dd>{response?.model_version ?? "-"}</dd>
             </div>
             <div>
-              <dt>Status</dt>
+              <dt>Trạng thái</dt>
               <dd>
                 <StatusBadge value={jobStatus?.status ?? response?.status ?? "-"} />
               </dd>
             </div>
           </dl>
-          <h3>Kết quả</h3>
-          {response?.case_id && onOpenCases && (
-            <button onClick={onOpenCases} type="button">
-              Xem chi tiết ca
-            </button>
-          )}
+          <div className="section-heading">
+            <h3>Kết quả AI</h3>
+            {response?.case_id && onOpenCases && (
+              <button onClick={onOpenCases} type="button">
+                Mở ca trong lịch sử
+              </button>
+            )}
+          </div>
           <ResultTable results={results} />
           {response?.case_id && results.length > 0 && (
             <TrainingConfirmationPanel

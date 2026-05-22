@@ -76,7 +76,7 @@ function App() {
             <span>Hệ thống phân tích ảnh X-quang lồng ngực</span>
           </div>
         </div>
-        <nav className="nav-list" aria-label="Main navigation">
+        <nav className="nav-list" aria-label="Điều hướng chính">
           {navItems.map((item) => (
             <button
               className={page === item.key ? "active" : ""}

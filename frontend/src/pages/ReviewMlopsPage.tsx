@@ -5,8 +5,8 @@ import {
   correctReview,
   exportRetrainingManifest,
   getRetrainingSummary,
-  listRetrainingJobs,
   listPendingReviews,
+  listRetrainingJobs,
   triggerRetraining,
 } from "../api/client";
 import { Message } from "../components/Message";
@@ -61,7 +61,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
 
   useEffect(() => {
     refreshData().catch((exc) =>
-      setError(exc instanceof Error ? exc.message : "Không tải được review."),
+      setError(exc instanceof Error ? exc.message : "Không tải được danh sách cần duyệt."),
     );
   }, [isAdmin]);
 
@@ -70,10 +70,10 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     setMessage(null);
     try {
       await confirmReview(reviewId);
-      setMessage("Đã confirm AI labels. Case này đã vào retraining buffer.");
+      setMessage("Đã xác nhận AI đúng. Ca này được đưa vào retraining buffer.");
       await refreshData();
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Không confirm được review.");
+      setError(exc instanceof Error ? exc.message : "Không xác nhận được review.");
     }
   }
 
@@ -86,12 +86,10 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
         confirmed_positive: Boolean(corrections[reviewId]?.[label]),
       }));
       await correctReview(reviewId, labels);
-      setMessage("Đã lưu corrected labels. Case này đã vào retraining buffer.");
+      setMessage("Đã lưu nhãn bác sĩ chọn. Ca này được đưa vào retraining buffer.");
       await refreshData();
     } catch (exc) {
-      setError(
-        exc instanceof Error ? exc.message : "Không lưu được corrected labels.",
-      );
+      setError(exc instanceof Error ? exc.message : "Không lưu được nhãn đã chọn.");
     }
   }
 
@@ -157,8 +155,11 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     <section className="page">
       <div className="page-header">
         <div>
-          <h2>Duyệt/gán nhãn lại</h2>
-          <p>Pending reviews chưa training-ready cho tới khi được confirm/correct.</p>
+          <h2>Duyệt ca cần xác nhận</h2>
+          <p>
+            Xem các ca AI chưa đủ chắc chắn, xác nhận nếu AI đúng hoặc gán lại
+            nhãn để tạo dữ liệu huấn luyện đáng tin cậy.
+          </p>
         </div>
         <StatusBadge value={summary?.should_trigger_retraining ?? false} />
       </div>
@@ -168,48 +169,56 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
 
       <div className="panel">
         <div className="section-heading">
-          <h3>Retraining summary</h3>
-          <button
-            disabled={!isAdmin}
-            onClick={() => void handleRetrainingCheck()}
-            type="button"
-          >
-            Check retraining
-          </button>
-          <button
-            disabled={!isAdmin}
-            onClick={() => void handleExportManifest()}
-            type="button"
-          >
-            Export manifest
-          </button>
-          <button
-            className="primary"
-            disabled={!isAdmin || !summary?.should_trigger_retraining}
-            onClick={() => void handleTriggerRetraining()}
-            type="button"
-          >
-            Trigger retraining
-          </button>
+          <div>
+            <h3>Retraining readiness</h3>
+            <p className="muted">
+              Chỉ các ca đã được xác nhận hoặc sửa nhãn mới được tính là
+              training-ready.
+            </p>
+          </div>
+          <div className="actions">
+            <button
+              disabled={!isAdmin}
+              onClick={() => void handleRetrainingCheck()}
+              type="button"
+            >
+              Kiểm tra điều kiện
+            </button>
+            <button
+              disabled={!isAdmin}
+              onClick={() => void handleExportManifest()}
+              type="button"
+            >
+              Xuất manifest
+            </button>
+            <button
+              className="primary"
+              disabled={!isAdmin || !summary?.should_trigger_retraining}
+              onClick={() => void handleTriggerRetraining()}
+              type="button"
+            >
+              Bắt đầu retraining
+            </button>
+          </div>
         </div>
         {!isAdmin ? (
           <p className="muted">
-            Pending reviews chưa training-ready cho tới khi được doctor/admin
-            confirm/correct. Chỉ Quản trị viên xem được retraining summary.
+            Bác sĩ/KTV chỉ cần duyệt nhãn. Phần retraining summary dành cho
+            Quản trị viên.
           </p>
         ) : summary ? (
           <div className="summary-grid">
-            <SummaryItem label="Min samples" value={summary.min_confirmed_samples} />
-            <SummaryItem label="Pending" value={summary.pending_reviews} />
-            <SummaryItem label="Confirmed" value={summary.confirmed_reviews} />
-            <SummaryItem label="Corrected" value={summary.corrected_reviews} />
+            <SummaryItem label="Tối thiểu" value={summary.min_confirmed_samples} />
+            <SummaryItem label="Chờ duyệt" value={summary.pending_reviews} />
+            <SummaryItem label="Đã xác nhận" value={summary.confirmed_reviews} />
+            <SummaryItem label="Đã sửa nhãn" value={summary.corrected_reviews} />
             <SummaryItem label="Training-ready" value={summary.training_ready_cases} />
             <SummaryItem
-              label="Should trigger"
-              value={summary.should_trigger_retraining ? "yes" : "no"}
+              label="Có thể train"
+              value={summary.should_trigger_retraining ? "Có" : "Chưa"}
             />
             <SummaryItem
-              label="Running job"
+              label="Job đang chạy"
               value={
                 summary.running_job
                   ? compactId(summary.running_job.retraining_job_id)
@@ -217,7 +226,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
               }
             />
             <SummaryItem
-              label="Latest job"
+              label="Job mới nhất"
               value={
                 summary.latest_job
                   ? compactId(summary.latest_job.retraining_job_id)
@@ -232,7 +241,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
 
       {isAdmin && jobs.length > 0 && (
         <div className="panel">
-          <h3>Retraining jobs</h3>
+          <h3>Retraining jobs gần đây</h3>
           <div className="table-wrap">
             <table>
               <thead>
@@ -270,32 +279,36 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
 
       <div className="review-list">
         {reviews.length === 0 ? (
-          <div className="panel">
-            <p className="muted">Không có pending review.</p>
+          <div className="panel empty-state">
+            <strong>Không có ca cần duyệt</strong>
+            <p>Tất cả ca hiện tại đã được xử lý hoặc chưa có ca nào cần bác sĩ xác nhận.</p>
           </div>
         ) : (
           reviews.map((review) => (
             <article className="panel review-card" key={review.review_id}>
               <div className="review-header">
                 <div>
-                  <h3>Review {compactId(review.review_id)}</h3>
-                  <p>Case {compactId(review.case_id)}</p>
+                  <h3>Ca cần duyệt {compactId(review.case_id)}</h3>
+                  <p>Review {compactId(review.review_id)}</p>
                 </div>
                 <StatusBadge value={review.status} />
               </div>
               <Message tone="warning">{review.reason}</Message>
               <ResultTable results={review.analysis_results} />
-              <div className="review-actions">
+              <div className="decision-actions">
                 <button
                   className="primary"
                   onClick={() => void handleConfirm(review.review_id)}
                   type="button"
                 >
-                  Confirm AI labels
+                  Xác nhận AI đúng
                 </button>
+                <span className="action-note">
+                  Dùng khi bác sĩ đồng ý với toàn bộ nhãn AI trong bảng kết quả.
+                </span>
               </div>
               <div className="correction-box">
-                <h4>Correct labels</h4>
+                <h4>Gán lại nhãn đúng</h4>
                 <div className="toggle-grid">
                   {demoLabels.map((label) => (
                     <label className="toggle-row" key={label}>
@@ -313,7 +326,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
                   onClick={() => void handleCorrect(review.review_id)}
                   type="button"
                 >
-                  Submit corrected labels
+                  Lưu nhãn bác sĩ chọn
                 </button>
               </div>
             </article>

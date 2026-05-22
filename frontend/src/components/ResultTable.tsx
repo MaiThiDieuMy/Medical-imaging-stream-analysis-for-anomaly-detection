@@ -8,31 +8,52 @@ type ResultTableProps = {
 
 export function ResultTable({ results }: ResultTableProps) {
   if (results.length === 0) {
-    return <p className="muted">Chưa có kết quả.</p>;
+    return (
+      <div className="empty-state compact">
+        <strong>Chưa có kết quả AI</strong>
+        <p>Kết quả sẽ xuất hiện sau khi job inference hoàn tất.</p>
+      </div>
+    );
   }
 
+  const sortedResults = [...results].sort(
+    (left, right) => right.probability - left.probability,
+  );
+  const topResult = sortedResults[0];
+
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Nhãn</th>
-            <th>Xác suất</th>
-            <th>Dương tính</th>
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((result) => (
-            <tr key={result.label_name}>
-              <td>{result.label_name}</td>
-              <td>{formatPercent(result.probability)}</td>
-              <td>
-                <StatusBadge value={result.predicted_positive} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="ai-result-card">
+      <div className="ai-result-summary">
+        <div>
+          <span className="eyebrow">AI đề xuất</span>
+          <strong>{topResult.label_name}</strong>
+          <p>Model confidence {formatPercent(topResult.probability)}</p>
+        </div>
+        <StatusBadge value={topResult.predicted_positive ? "positive" : "draft"} />
+      </div>
+
+      <div className="result-list" aria-label="AI result probabilities">
+        {sortedResults.map((result) => (
+          <div className="result-row" key={result.label_name}>
+            <div>
+              <strong>{result.label_name}</strong>
+              <span>{result.predicted_positive ? "Predicted positive" : "Not flagged"}</span>
+            </div>
+            <div className="probability-cell">
+              <span>{formatPercent(result.probability)}</span>
+              <div
+                aria-hidden="true"
+                className="probability-track"
+              >
+                <div
+                  className={result.predicted_positive ? "positive" : ""}
+                  style={{ width: formatPercent(result.probability) }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

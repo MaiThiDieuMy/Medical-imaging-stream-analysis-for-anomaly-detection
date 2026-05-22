@@ -95,9 +95,13 @@ export function UserManagementPage() {
     <section className="page">
       <div className="page-header">
         <div>
-          <h2>Quản lý người dùng</h2>
-          <p>Tạo, cập nhật vai trò và khóa/mở tài khoản Bác sĩ/KTV hoặc Quản trị viên.</p>
+          <h2>Người dùng</h2>
+          <p>
+            Tạo tài khoản demo, cập nhật vai trò và khóa/mở tài khoản Bác sĩ/KTV
+            hoặc Quản trị viên.
+          </p>
         </div>
+        <span className="count-pill">{users.length} users</span>
       </div>
 
       {error && <Message tone="error">{error}</Message>}
@@ -105,7 +109,13 @@ export function UserManagementPage() {
 
       <div className="split-layout">
         <form className="panel form-grid" onSubmit={handleCreate}>
-          <h3 className="span-2">Tạo người dùng</h3>
+          <div className="form-section span-2">
+            <span className="step-badge">1</span>
+            <div>
+              <h3>Tạo người dùng</h3>
+              <p className="muted">Tài khoản mới có thể đăng nhập ngay nếu active.</p>
+            </div>
+          </div>
           <label>
             Username
             <input name="username" required />
@@ -129,12 +139,18 @@ export function UserManagementPage() {
             </select>
           </label>
           <button className="primary span-2" disabled={loading} type="submit">
-            Tạo người dùng
+            {loading ? "Đang tạo..." : "Tạo người dùng"}
           </button>
         </form>
 
         <form className="panel form-grid" onSubmit={handleUpdate}>
-          <h3 className="span-2">Cập nhật người dùng</h3>
+          <div className="form-section span-2">
+            <span className="step-badge">2</span>
+            <div>
+              <h3>Cập nhật tài khoản</h3>
+              <p className="muted">Khóa tài khoản sẽ ngăn user đăng nhập và dùng token mới.</p>
+            </div>
+          </div>
           {selectedUser ? (
             <>
               <label className="span-2">
@@ -196,11 +212,14 @@ export function UserManagementPage() {
                 Tài khoản đang hoạt động
               </label>
               <button className="primary span-2" disabled={loading} type="submit">
-                Lưu thay đổi
+                {loading ? "Đang lưu..." : "Lưu thay đổi"}
               </button>
             </>
           ) : (
-            <p className="muted span-2">Chưa có người dùng.</p>
+            <div className="empty-state compact span-2">
+              <strong>Chưa có người dùng</strong>
+              <p>Tạo người dùng đầu tiên để bắt đầu quản trị tài khoản.</p>
+            </div>
           )}
         </form>
       </div>
@@ -230,6 +249,11 @@ export function UserManagementPage() {
                   <td title={user.user_id}>{compactId(user.user_id)}</td>
                 </tr>
               ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={5}>Chưa có người dùng.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

@@ -17,17 +17,17 @@ const INFRASTRUCTURE_LINKS = [
   {
     label: "Prometheus",
     href: "http://localhost:9090",
-    description: "Targets, alerts và truy vấn PromQL.",
+    description: "Kiểm tra targets, alerts và truy vấn PromQL.",
   },
   {
     label: "Grafana",
     href: "http://localhost:3000",
-    description: "Dashboard hệ thống, ứng dụng, Celery/Redis và logs.",
+    description: "Xem dashboard hệ thống, ứng dụng, Celery/Redis và logs.",
   },
   {
     label: "cAdvisor",
     href: "http://localhost:8080",
-    description: "CPU, memory và container runtime metrics.",
+    description: "Theo dõi CPU, memory và runtime metrics của container.",
   },
   {
     label: "Flower",
@@ -37,7 +37,7 @@ const INFRASTRUCTURE_LINKS = [
   {
     label: "RedisInsight",
     href: "http://localhost:5540",
-    description: "Kiểm tra Redis broker/result backend.",
+    description: "Kiểm tra Redis broker và result backend.",
   },
   {
     label: "MinIO Console",
@@ -47,7 +47,7 @@ const INFRASTRUCTURE_LINKS = [
   {
     label: "MLflow",
     href: "http://localhost:5000",
-    description: "Theo dõi run và model registry metadata.",
+    description: "Theo dõi runs, artifacts và model registry metadata.",
   },
 ];
 
@@ -101,7 +101,10 @@ export function MonitoringPage() {
       <div className="page-header">
         <div>
           <h2>Monitoring</h2>
-          <p>Trung tâm vận hành cho Admin: backend, queue, database, logs và dashboard.</p>
+          <p>
+            Summary vận hành trong app. Dùng Grafana/Prometheus khi cần phân tích
+            sâu hơn.
+          </p>
         </div>
         <div className="actions">
           <a className="button-link" href="http://localhost:9090/targets" rel="noreferrer" target="_blank">
@@ -111,7 +114,7 @@ export function MonitoringPage() {
             Grafana
           </a>
           <button disabled={loading} onClick={() => void refreshSummary()} type="button">
-            {loading ? "Đang tải..." : "Refresh"}
+            {loading ? "Đang tải..." : "Tải lại"}
           </button>
         </div>
       </div>
@@ -142,8 +145,9 @@ export function MonitoringPage() {
 function OverviewTab({ summary }: { summary: MonitoringSummary | null }) {
   if (!summary) {
     return (
-      <div className="panel">
-        <p className="muted">Chưa có monitoring summary.</p>
+      <div className="panel empty-state">
+        <strong>Chưa có monitoring summary</strong>
+        <p>Thử tải lại hoặc kiểm tra backend tại cổng 8000.</p>
       </div>
     );
   }
@@ -185,7 +189,7 @@ function OverviewTab({ summary }: { summary: MonitoringSummary | null }) {
               </div>
             </dl>
           ) : (
-            <p className="muted">Chưa có active model.</p>
+            <Message tone="warning">Chưa có active model.</Message>
           )}
         </div>
 
@@ -213,8 +217,8 @@ function InfrastructureTab() {
   return (
     <>
       <div className="panel">
-        <h3>Dashboards</h3>
-        <p className="muted">Grafana dùng Prometheus và Loki đã được provision sẵn.</p>
+        <h3>Grafana dashboards</h3>
+        <p className="muted">Các dashboard đã được provision sẵn bằng Prometheus và Loki.</p>
         <div className="link-grid">
           {DASHBOARD_LINKS.map((link) => (
             <a className="link-card" href={link.href} key={link.href} rel="noreferrer" target="_blank">
@@ -246,8 +250,8 @@ function LogsTab() {
       <div className="panel">
         <h3>Log dashboards</h3>
         <p className="muted">
-          Promtail đọc Docker logs và đẩy vào Loki. Dùng Grafana Explore để lọc theo
-          service như backend, celery_worker, postgres hoặc minio.
+          Promtail đọc Docker logs và đẩy vào Loki. Dùng Grafana Explore để lọc
+          theo service như backend, celery_worker, postgres hoặc minio.
         </p>
         <div className="actions">
           <a
@@ -298,7 +302,7 @@ function TroubleshootingTab({ summary }: { summary: MonitoringSummary | null }) 
         <CheckItem
           label="Redis / Celery"
           value={summary?.redis_broker_status ?? "unknown"}
-          hint="Nếu job bị queued lâu, mở Flower và kiểm tra celery_worker logs."
+          hint="Nếu job queued lâu, mở Flower và kiểm tra celery_worker logs."
         />
         <CheckItem
           label="Queue backlog"
@@ -314,7 +318,7 @@ function TroubleshootingTab({ summary }: { summary: MonitoringSummary | null }) 
                 } miss`
               : "unknown"
           }
-          hint="Cache hit không được tạo case/job mới; nếu nghi ngờ, kiểm tra case history."
+          hint="Cache hit không tạo case/job mới; nếu nghi ngờ, kiểm tra case history."
         />
       </div>
     </div>
