@@ -21,6 +21,7 @@ This is a development and presentation demo. The local model is not clinically c
 - Confirmed/corrected labels only become training-ready after doctor/admin review evidence is stored.
 - Stored-image retrieval, case history/detail, and browser-printable HTML reports.
 - Retraining manifest export from confirmed/corrected labels only.
+- Versioned dataset manifest registry for MLOps retraining lineage.
 - Operations monitoring with Prometheus, Grafana, Loki/Promtail logs, cAdvisor,
   Flower, RedisInsight, Redis exporter, and PostgreSQL exporter.
 - Soft archive/deactivate actions for cases, users, and model metadata. Historical analysis results are not hard-deleted.
@@ -192,6 +193,8 @@ Archive/deactivate behavior:
 - Active models cannot be archived. Activate another model first, then archive inactive metadata if needed.
 
 ## Testing Commands
+
+See `docs/MLOPS_RETRAINING.md` for the dataset manifest and async fine-tune workflow.
 
 ```bash
 python -m pytest backend/tests -v

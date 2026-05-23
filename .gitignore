@@ -239,3 +239,7 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+
+pytest-cache-files-*/
+.pytest_cache/
