@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import json
 from pathlib import Path
 import sys
 import uuid
@@ -30,6 +31,7 @@ from app.models.ai_model import AIModel
 from app.models.analysis_result import AnalysisResult
 from app.models.case_review import CaseReview
 from app.models.confirmed_label import ConfirmedLabel
+from app.models.dataset_manifest import DatasetManifest
 from app.models.enums import ProcessingStatus, UserRole
 from app.models.patient import Patient
 from app.models.retraining_job import RetrainingJob
@@ -42,6 +44,8 @@ from app.services.reviews import ReviewService, ensure_pending_review_for_output
 
 @pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
+    original_auto_start = settings.auto_start_retraining_job
+    settings.auto_start_retraining_job = False
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
@@ -51,6 +55,7 @@ def db_session() -> Generator[Session, None, None]:
     finally:
         session.close()
         Base.metadata.drop_all(engine)
+        settings.auto_start_retraining_job = original_auto_start
 
 
 @pytest.fixture()
@@ -59,6 +64,8 @@ def client_and_session_factory() -> Generator[
     None,
     None,
 ]:
+    original_auto_start = settings.auto_start_retraining_job
+    settings.auto_start_retraining_job = False
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -81,6 +88,7 @@ def client_and_session_factory() -> Generator[
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
+        settings.auto_start_retraining_job = original_auto_start
 
 
 def _seed_user(db: Session, *, role: UserRole = UserRole.ADMIN) -> User:
@@ -344,6 +352,68 @@ def test_trigger_retraining_rejects_without_enough_confirmed_samples(
     )
 
     assert response.status_code == 400
+
+
+def test_hybrid_retraining_triggers_on_new_images_but_trains_cumulative_dataset(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "retrain_manifest_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "retrain_min_confirmed_samples", 2)
+    admin = _seed_user(db_session, role=UserRole.ADMIN)
+    _seed_active_model(db_session)
+    service = RetrainingService(db_session)
+
+    _confirm_case(
+        db_session,
+        _seed_completed_case(db_session, positive_label="Effusion"),
+        admin,
+    )
+    _confirm_case(
+        db_session,
+        _seed_completed_case(db_session, positive_label="Atelectasis"),
+        admin,
+    )
+    first_job = service.create_retraining_job(triggered_by=admin.user_id)
+    service.mark_job_failed(first_job, Exception("test finished first cycle"))
+
+    summary_after_first_cycle = service.get_retraining_summary()
+    assert summary_after_first_cycle["training_ready_cases"] == 2
+    assert summary_after_first_cycle["new_training_ready_cases"] == 0
+    assert summary_after_first_cycle["should_trigger_retraining"] is False
+
+    _confirm_case(
+        db_session,
+        _seed_completed_case(db_session, positive_label="Infiltration"),
+        admin,
+    )
+    summary_with_one_new_image = service.get_retraining_summary()
+    assert summary_with_one_new_image["training_ready_cases"] == 3
+    assert summary_with_one_new_image["new_training_ready_cases"] == 1
+    assert summary_with_one_new_image["should_trigger_retraining"] is False
+
+    with pytest.raises(Exception) as exc_info:
+        service.create_retraining_job(triggered_by=admin.user_id)
+    assert "Not enough new confirmed/corrected cases" in str(exc_info.value)
+
+    _confirm_case(
+        db_session,
+        _seed_completed_case(db_session, positive_label="No Finding"),
+        admin,
+    )
+    summary_with_two_new_images = service.get_retraining_summary()
+    assert summary_with_two_new_images["training_ready_cases"] == 4
+    assert summary_with_two_new_images["new_training_ready_cases"] == 2
+    assert summary_with_two_new_images["should_trigger_retraining"] is True
+
+    second_job = service.create_retraining_job(triggered_by=admin.user_id)
+    manifest = db_session.get(DatasetManifest, second_job.dataset_manifest_id)
+    assert manifest is not None
+    assert manifest.samples_count == 4
+    payload = Path(manifest.manifest_path).read_text(encoding="utf-8")
+    assert '"selection_strategy": "hybrid_cumulative_training_new_image_trigger"' in payload
+    assert len(json.loads(payload)["samples"]) == 4
 
 
 def test_evaluate_multiclass_model_returns_expected_metrics() -> None:

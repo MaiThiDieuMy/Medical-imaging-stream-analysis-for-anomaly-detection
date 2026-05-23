@@ -116,6 +116,7 @@ class RetrainingJobResponse(BaseModel):
     status: str
     base_model_id: UUID
     candidate_model_id: UUID | None = None
+    dataset_manifest_id: UUID | None = None
     manifest_path: str | None = None
     output_model_path: str | None = None
     mlflow_run_id: str | None = None
@@ -135,15 +136,43 @@ class RetrainingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RetrainingJobCreateRequest(BaseModel):
+    manifest_id: UUID | None = None
+
+
+class DatasetManifestResponse(BaseModel):
+    manifest_id: UUID
+    manifest_name: str
+    version: str
+    manifest_path: str
+    samples_count: int
+    label_distribution: dict[str, int]
+    source_review_statuses: list[str]
+    base_query_hash: str
+    is_locked: bool
+    used_by_retraining_job_id: UUID | None = None
+    metadata_json: dict[str, object] | None = None
+    created_by_id: UUID | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RetrainingSummaryResponse(BaseModel):
     min_confirmed_samples: int
     pending_reviews: int
     confirmed_reviews: int
     corrected_reviews: int
     training_ready_cases: int
+    new_training_ready_cases: int = 0
+    used_training_ready_cases: int = 0
+    auto_start_retraining_job: bool = False
+    label_distribution: dict[str, int] = Field(default_factory=dict)
+    new_label_distribution: dict[str, int] = Field(default_factory=dict)
     should_trigger_retraining: bool
     running_job: RetrainingJobResponse | None = None
     latest_job: RetrainingJobResponse | None = None
+    latest_manifest: DatasetManifestResponse | None = None
 
 
 class RetrainingCheckResponse(RetrainingSummaryResponse):
@@ -151,9 +180,20 @@ class RetrainingCheckResponse(RetrainingSummaryResponse):
 
 
 class ManifestExportResponse(BaseModel):
+    manifest_id: UUID
     manifest_path: str
     samples_count: int
     message: str
+
+
+class DatasetSummaryResponse(BaseModel):
+    training_ready_cases: int
+    new_training_ready_cases: int = 0
+    used_training_ready_cases: int = 0
+    label_distribution: dict[str, int] = Field(default_factory=dict)
+    new_label_distribution: dict[str, int] = Field(default_factory=dict)
+    manifest_count: int
+    latest_manifest: DatasetManifestResponse | None = None
 
 
 class ClassificationMetricsResponse(BaseModel):

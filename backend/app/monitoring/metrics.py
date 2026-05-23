@@ -51,6 +51,15 @@ def record_mlflow_registration(*, status: str) -> None:
         _counters[f"mlflow_registration_{normalized_status}_total"] += 1
 
 
+def record_model_promotion(*, promoted: bool) -> None:
+    with _lock:
+        _counters["model_promotions_total"] += 1
+        if promoted:
+            _counters["model_promotions_success_total"] += 1
+        else:
+            _counters["model_promotions_rejected_total"] += 1
+
+
 def snapshot() -> dict[str, int]:
     with _lock:
         return dict(_counters)

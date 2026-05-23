@@ -3,6 +3,7 @@ from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import AnalysisResult
 from app.models.case_review import CaseReview
 from app.models.confirmed_label import ConfirmedLabel
+from app.models.dataset_manifest import DatasetManifest
 from app.models.enums import ProcessingStatus, UserRole
 from app.models.patient import Patient
 from app.models.retraining_job import RetrainingJob
@@ -16,6 +17,7 @@ __all__ = [
     "AnalysisResult",
     "CaseReview",
     "ConfirmedLabel",
+    "DatasetManifest",
     "Patient",
     "ProcessingStatus",
     "RetrainingJob",

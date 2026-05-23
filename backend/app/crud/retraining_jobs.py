@@ -13,6 +13,8 @@ def create_retraining_job(
     *,
     status: str,
     base_model_id: uuid.UUID,
+    dataset_manifest_id: uuid.UUID,
+    manifest_path: str,
     training_samples_count: int,
     min_required_samples: int,
     triggered_by: uuid.UUID | None,
@@ -20,6 +22,8 @@ def create_retraining_job(
     job = RetrainingJob(
         status=status,
         base_model_id=base_model_id,
+        dataset_manifest_id=dataset_manifest_id,
+        manifest_path=manifest_path,
         training_samples_count=training_samples_count,
         min_required_samples=min_required_samples,
         triggered_by_id=triggered_by,
@@ -52,7 +56,24 @@ def list_retraining_jobs(db: Session) -> list[RetrainingJob]:
 def get_active_retraining_job(db: Session) -> RetrainingJob | None:
     return db.execute(
         select(RetrainingJob)
-        .where(RetrainingJob.status.in_({"queued", "running"}))
+        .where(RetrainingJob.status.in_({"queued", "pending", "running", "evaluating", "registering"}))
+        .order_by(RetrainingJob.created_at.desc())
+    ).scalar_one_or_none()
+
+
+def get_active_retraining_job_for_manifest(
+    db: Session,
+    *,
+    dataset_manifest_id: uuid.UUID,
+) -> RetrainingJob | None:
+    return db.execute(
+        select(RetrainingJob)
+        .where(
+            RetrainingJob.dataset_manifest_id == dataset_manifest_id,
+            RetrainingJob.status.in_(
+                {"queued", "pending", "running", "evaluating", "registering"}
+            ),
+        )
         .order_by(RetrainingJob.created_at.desc())
     ).scalar_one_or_none()
 

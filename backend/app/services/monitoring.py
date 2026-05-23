@@ -7,7 +7,9 @@ from app.core.config import settings
 from app.crud.ai_models import get_active_model
 from app.models.analysis_job import AnalysisJob
 from app.models.case_review import CaseReview
+from app.models.dataset_manifest import DatasetManifest
 from app.models.enums import ProcessingStatus
+from app.models.retraining_job import RetrainingJob
 from app.models.xray_case import XRayCase
 from app.monitoring.metrics import snapshot
 from app.schemas.monitoring import MonitoringActiveModel
@@ -68,6 +70,24 @@ class MonitoringService:
         database_reachable = self._database_reachable()
         job_counts = self._count_jobs_by_status() if database_reachable else {}
         review_counts = self._count_reviews_by_status() if database_reachable else {}
+        retraining_counts = (
+            self._count_retraining_jobs_by_status() if database_reachable else {}
+        )
+        manifest_count = (
+            self.db.scalar(select(func.count()).select_from(DatasetManifest)) or 0
+            if database_reachable
+            else 0
+        )
+        latest_manifest_samples = (
+            self.db.scalar(
+                select(DatasetManifest.samples_count).order_by(
+                    DatasetManifest.created_at.desc()
+                )
+            )
+            or 0
+            if database_reachable
+            else 0
+        )
         active_model = get_active_model(self.db) if database_reachable else None
         celery_queue_length = self._celery_queue_length()
         completed_jobs = max(
@@ -131,6 +151,60 @@ class MonitoringService:
             lines.append(
                 f'case_reviews_total{{status="{status}"}} {review_counts.get(status, 0)}'
             )
+        training_ready_samples = review_counts.get(
+            REVIEW_STATUS_CONFIRMED,
+            0,
+        ) + review_counts.get(REVIEW_STATUS_CORRECTED, 0)
+        correction_base = max(
+            training_ready_samples + review_counts.get("rejected", 0),
+            1,
+        )
+        correction_rate = review_counts.get(REVIEW_STATUS_CORRECTED, 0) / correction_base
+        lines.extend(
+            [
+                "# HELP training_ready_samples Current doctor-validated samples available for retraining.",
+                "# TYPE training_ready_samples gauge",
+                f"training_ready_samples {training_ready_samples}",
+                "# HELP dataset_manifest_count Dataset manifest snapshots created.",
+                "# TYPE dataset_manifest_count gauge",
+                f"dataset_manifest_count {manifest_count}",
+                "# HELP latest_manifest_samples Samples in the latest dataset manifest.",
+                "# TYPE latest_manifest_samples gauge",
+                f"latest_manifest_samples {latest_manifest_samples}",
+                "# HELP review_correction_rate Share of finalized reviews that corrected AI output.",
+                "# TYPE review_correction_rate gauge",
+                f"review_correction_rate {correction_rate}",
+                "# HELP retraining_jobs_total Retraining jobs by status.",
+                "# TYPE retraining_jobs_total gauge",
+            ]
+        )
+        for status in sorted(
+            {"queued", "running", "evaluating", "registering", "completed", "failed"}
+            | set(retraining_counts)
+        ):
+            lines.append(
+                f'retraining_jobs_total{{status="{status}"}} '
+                f"{retraining_counts.get(status, 0)}"
+            )
+        latest_candidate_f1 = (
+            self.db.scalar(
+                select(RetrainingJob.f1_score)
+                .where(RetrainingJob.f1_score.is_not(None))
+                .order_by(RetrainingJob.finished_at.desc())
+            )
+            if database_reachable
+            else None
+        )
+        lines.extend(
+            [
+                "# HELP latest_candidate_f1_score Latest retrained candidate F1 score.",
+                "# TYPE latest_candidate_f1_score gauge",
+                f"latest_candidate_f1_score {latest_candidate_f1 if latest_candidate_f1 is not None else -1}",
+                "# HELP model_promotions_total Model promotion attempts observed by the backend.",
+                "# TYPE model_promotions_total counter",
+                f"model_promotions_total {counters.get('model_promotions_total', 0)}",
+            ]
+        )
         lines.extend(
             [
                 "# HELP model_active_info Active AI model metadata.",
@@ -169,6 +243,12 @@ class MonitoringService:
     def _count_reviews_by_status(self) -> dict[str, int]:
         rows = self.db.execute(
             select(CaseReview.status, func.count()).group_by(CaseReview.status)
+        ).all()
+        return {status: count for status, count in rows}
+
+    def _count_retraining_jobs_by_status(self) -> dict[str, int]:
+        rows = self.db.execute(
+            select(RetrainingJob.status, func.count()).group_by(RetrainingJob.status)
         ).all()
         return {status: count for status, count in rows}
 

@@ -39,12 +39,14 @@ class Settings(BaseSettings):
 
     low_confidence_threshold: float = 0.7
     review_near_threshold_margin: float = 0.1
-    retrain_min_confirmed_samples: int = 5
+    retrain_min_confirmed_samples: int = 15
+    auto_start_retraining_job: bool = False
     retrain_epochs: int = 3
     retrain_batch_size: int = 8
     retrain_learning_rate: float = 0.0001
     retrain_validation_split: float = 0.2
     auto_promote_retrained_model: bool = False
+    promotion_max_recall_drop: float = 0.02
     retrain_output_dir: str = "artifacts/models/retrained"
     retrain_manifest_dir: str = "artifacts/retraining_manifests"
     retraining_manifest_dir: str = "artifacts/retraining_manifests"

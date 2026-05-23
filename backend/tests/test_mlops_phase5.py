@@ -41,6 +41,8 @@ from app.services.reviews import (
 
 @pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
+    original_auto_start = settings.auto_start_retraining_job
+    settings.auto_start_retraining_job = False
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
@@ -50,6 +52,7 @@ def db_session() -> Generator[Session, None, None]:
     finally:
         session.close()
         Base.metadata.drop_all(engine)
+        settings.auto_start_retraining_job = original_auto_start
 
 
 def _create_model(

@@ -306,7 +306,30 @@ class ReviewService:
             status,
             reviewed_by,
         )
+        self._auto_start_retraining_if_ready(reviewed_by=reviewed_by)
         return self.get_review(review.review_id)
+
+    def _auto_start_retraining_if_ready(
+        self,
+        *,
+        reviewed_by: uuid.UUID | None,
+    ) -> None:
+        if not settings.auto_start_retraining_job:
+            return
+        try:
+            from app.services.retraining import RetrainingService
+
+            job = RetrainingService(self.db).auto_start_retraining_if_ready(
+                triggered_by=reviewed_by,
+            )
+            if job is not None:
+                logger.info(
+                    "Auto-started retraining job: retraining_job_id=%s triggered_by=%s",
+                    job.retraining_job_id,
+                    reviewed_by,
+                )
+        except Exception:
+            logger.exception("Auto-start retraining check failed after review completion")
 
     @staticmethod
     def _validate_complete_label_set(labels: dict[str, bool]) -> None:

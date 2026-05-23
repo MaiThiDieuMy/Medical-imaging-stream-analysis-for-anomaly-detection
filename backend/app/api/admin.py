@@ -16,6 +16,8 @@ from app.schemas.admin import (
     CandidateModelCreate,
     CaseReviewResponse,
     ConfirmedLabelItem,
+    DatasetManifestResponse,
+    DatasetSummaryResponse,
     ManifestExportResponse,
     MLflowLocalCheckpointRegisterRequest,
     MLflowModelsResponse,
@@ -23,6 +25,7 @@ from app.schemas.admin import (
     MLflowRunsResponse,
     PromoteModelResponse,
     RetrainingCheckResponse,
+    RetrainingJobCreateRequest,
     RetrainingJobResponse,
     RetrainingSummaryResponse,
     ReviewConfirmRequest,
@@ -305,6 +308,61 @@ def get_retraining_samples(
     ]
 
 
+@router.get("/mlops/dataset/summary", response_model=DatasetSummaryResponse)
+def get_dataset_summary(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> DatasetSummaryResponse:
+    return DatasetSummaryResponse(**MLOpsService(db).dataset_summary())
+
+
+@router.get(
+    "/mlops/dataset/manifests",
+    response_model=list[DatasetManifestResponse],
+)
+def list_dataset_manifests(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> list[DatasetManifestResponse]:
+    return MLOpsService(db).dataset_manifests()
+
+
+@router.get(
+    "/mlops/dataset/manifests/{manifest_id}",
+    response_model=DatasetManifestResponse,
+)
+def get_dataset_manifest(
+    manifest_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> DatasetManifestResponse:
+    try:
+        return MLOpsService(db).get_dataset_manifest(manifest_id)
+    except RetrainingServiceError as exc:
+        raise _retraining_error_to_http(exc) from exc
+
+
+@router.post(
+    "/mlops/dataset/manifests",
+    response_model=DatasetManifestResponse,
+)
+def create_dataset_manifest(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> DatasetManifestResponse:
+    try:
+        manifest = MLOpsService(db).create_dataset_manifest(
+            created_by=current_user.user_id,
+        )
+    except RetrainingServiceError as exc:
+        raise _retraining_error_to_http(exc) from exc
+    db.commit()
+    db.refresh(manifest)
+    response.status_code = 201
+    return manifest
+
+
 @router.post("/mlops/retraining/check", response_model=RetrainingCheckResponse)
 def check_retraining(
     db: Session = Depends(get_db),
@@ -343,14 +401,23 @@ def get_retraining_job(
     "/mlops/retraining/trigger",
     response_model=RetrainingJobResponse,
 )
+@router.post(
+    "/mlops/retraining/jobs",
+    response_model=RetrainingJobResponse,
+)
 def trigger_retraining(
     response: Response,
+    payload: RetrainingJobCreateRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> RetrainingJobResponse:
+    payload = payload or RetrainingJobCreateRequest()
     try:
         service = RetrainingService(db)
-        job = service.create_retraining_job(triggered_by=current_user.user_id)
+        job = service.create_retraining_job(
+            triggered_by=current_user.user_id,
+            manifest_id=payload.manifest_id,
+        )
         from app.tasks.retraining import fine_tune_model
 
         fine_tune_model.delay(str(job.retraining_job_id))
@@ -366,9 +433,11 @@ def trigger_retraining(
 )
 def export_retraining_manifest(
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ) -> ManifestExportResponse:
-    return ManifestExportResponse(**MLOpsService(db).export_manifest())
+    return ManifestExportResponse(
+        **MLOpsService(db).export_manifest(created_by=current_user.user_id)
+    )
 
 
 @router.post(

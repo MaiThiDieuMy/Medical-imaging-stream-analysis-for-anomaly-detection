@@ -23,7 +23,7 @@ from app.mlops.mlflow_registry import (
     register_model_version,
 )
 from app.core.config import settings
-from app.monitoring.metrics import record_mlflow_registration
+from app.monitoring.metrics import record_mlflow_registration, record_model_promotion
 from app.schemas.admin import (
     AIModelCreate,
     CandidateModelCreate,
@@ -304,6 +304,7 @@ class ModelAdminService:
                 candidate.version,
                 reason,
             )
+            record_model_promotion(promoted=True)
             return PromoteModelResponse(
                 promoted=True,
                 reason=reason,
@@ -324,6 +325,7 @@ class ModelAdminService:
             candidate.version,
             reason,
         )
+        record_model_promotion(promoted=False)
         return PromoteModelResponse(
             promoted=False,
             reason=reason,
@@ -368,12 +370,37 @@ class ModelAdminService:
         candidate: AIModel,
         active: AIModel | None,
     ) -> tuple[bool, str]:
+        required_metrics = {
+            "accuracy": candidate.accuracy,
+            "precision_score": candidate.precision_score,
+            "recall_score": candidate.recall_score,
+            "f1_score": candidate.f1_score,
+        }
+        missing = [
+            metric_name
+            for metric_name, metric_value in required_metrics.items()
+            if metric_value is None
+        ]
+        if missing:
+            return False, "Candidate model is missing metrics: " + ", ".join(missing)
         if active is None:
             return True, "No active model exists"
-        if active.f1_score is None:
-            return True, "Active model has no f1_score metric"
-        if candidate.f1_score is None:
-            return False, "Candidate model has no f1_score metric"
-        if candidate.f1_score >= active.f1_score:
-            return True, "Candidate f1_score is greater than or equal to active model"
+        if active.f1_score is None or active.recall_score is None:
+            return True, "Active model is missing baseline metrics"
+        if (
+            candidate.recall_score is not None
+            and candidate.recall_score
+            < active.recall_score - settings.promotion_max_recall_drop
+        ):
+            return (
+                False,
+                "Candidate recall_score is lower than active model by more than "
+                "the allowed threshold",
+            )
+        if candidate.f1_score is not None and candidate.f1_score >= active.f1_score:
+            return (
+                True,
+                "Candidate f1_score is greater than or equal to active model and "
+                "recall policy passed",
+            )
         return False, "Candidate f1_score is lower than active model"

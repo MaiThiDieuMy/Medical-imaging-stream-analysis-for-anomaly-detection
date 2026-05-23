@@ -29,6 +29,11 @@ class RetrainingJob(Base):
         ForeignKey("ai_models.model_id", ondelete="SET NULL"),
         nullable=True,
     )
+    dataset_manifest_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("dataset_manifests.manifest_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     manifest_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_model_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     mlflow_run_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -62,5 +67,8 @@ class RetrainingJob(Base):
     base_model: Mapped["AIModel"] = relationship(foreign_keys=[base_model_id])
     candidate_model: Mapped["AIModel | None"] = relationship(
         foreign_keys=[candidate_model_id],
+    )
+    dataset_manifest: Mapped["DatasetManifest | None"] = relationship(
+        foreign_keys=[dataset_manifest_id],
     )
     triggered_by: Mapped["User | None"] = relationship(foreign_keys=[triggered_by_id])
