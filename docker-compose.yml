@@ -30,7 +30,12 @@ x-backend-environment: &backend-environment
   RETRAIN_BATCH_SIZE: ${RETRAIN_BATCH_SIZE:-8}
   RETRAIN_LEARNING_RATE: ${RETRAIN_LEARNING_RATE:-0.0001}
   RETRAIN_VALIDATION_SPLIT: ${RETRAIN_VALIDATION_SPLIT:-0.2}
+  RETRAIN_REPLAY_METADATA_PATH: ${RETRAIN_REPLAY_METADATA_PATH:-}
+  RETRAIN_REPLAY_SAMPLES_PER_CLASS: ${RETRAIN_REPLAY_SAMPLES_PER_CLASS:-30}
+  RETRAIN_EVAL_MANIFEST_PATH: ${RETRAIN_EVAL_MANIFEST_PATH:-}
+  RETRAIN_UNFREEZE_LAST_BLOCKS: ${RETRAIN_UNFREEZE_LAST_BLOCKS:-0}
   AUTO_PROMOTE_RETRAINED_MODEL: ${AUTO_PROMOTE_RETRAINED_MODEL:-false}
+  PROMOTION_MAX_RECALL_DROP: ${PROMOTION_MAX_RECALL_DROP:-0.02}
   RETRAIN_OUTPUT_DIR: ${RETRAIN_OUTPUT_DIR:-/app/artifacts/models/retrained}
   RETRAIN_MANIFEST_DIR: ${RETRAIN_MANIFEST_DIR:-/app/artifacts/retraining_manifests}
   RETRAINING_MANIFEST_DIR: ${RETRAINING_MANIFEST_DIR:-/app/artifacts/retraining_manifests}
@@ -51,6 +56,8 @@ services:
     volumes:
       - ./artifacts/models:/app/artifacts/models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/datasets:/app/artifacts/datasets
+      - ./artifacts/evaluation_manifests:/app/artifacts/evaluation_manifests
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,6 +89,8 @@ services:
     volumes:
       - ./artifacts/models:/app/artifacts/models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/datasets:/app/artifacts/datasets
+      - ./artifacts/evaluation_manifests:/app/artifacts/evaluation_manifests
     depends_on:
       postgres:
         condition: service_healthy
@@ -221,6 +230,8 @@ services:
     volumes:
       - ./artifacts/models:/app/artifacts/models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/datasets:/app/artifacts/datasets
+      - ./artifacts/evaluation_manifests:/app/artifacts/evaluation_manifests
     depends_on:
       redis:
         condition: service_healthy

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     retrain_batch_size: int = 8
     retrain_learning_rate: float = 0.0001
     retrain_validation_split: float = 0.2
+    retrain_replay_metadata_path: str = ""
+    retrain_replay_samples_per_class: int = 30
+    retrain_eval_manifest_path: str = ""
+    retrain_unfreeze_last_blocks: int = 0
     auto_promote_retrained_model: bool = False
     promotion_max_recall_drop: float = 0.02
     retrain_output_dir: str = "artifacts/models/retrained"

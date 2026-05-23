@@ -243,3 +243,9 @@ frontend/vite.config.d.ts
 
 pytest-cache-files-*/
 .pytest_cache/
+
+
+artifacts/datasets/*
+!artifacts/datasets/README.md
+artifacts/evaluation_manifests/*
+!artifacts/evaluation_manifests/README.md

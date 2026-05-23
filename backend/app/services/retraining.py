@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -26,6 +27,7 @@ from app.crud.retraining_jobs import (
     list_retraining_jobs,
 )
 from app.crud.reviews import count_reviews_by_status, list_training_ready_reviews
+from app.ml.retraining_dataset import RETRAIN_CLASS_ORDER, normalize_retraining_label
 from app.models.case_review import CaseReview
 from app.models.dataset_manifest import DatasetManifest
 from app.models.enums import ProcessingStatus
@@ -235,8 +237,13 @@ class RetrainingService:
         require_min_samples: bool = True,
     ) -> DatasetManifest:
         reviews = self.get_training_ready_samples()
-        samples = [self._manifest_sample(review) for review in reviews]
-        if require_min_samples and len(samples) < settings.retrain_min_confirmed_samples:
+        confirmed_samples = [self._manifest_sample(review) for review in reviews]
+        replay_samples = self._replay_manifest_samples()
+        samples = replay_samples + confirmed_samples
+        if (
+            require_min_samples
+            and len(confirmed_samples) < settings.retrain_min_confirmed_samples
+        ):
             raise RetrainingServiceError(
                 "Not enough confirmed/corrected cases to create a dataset manifest.",
                 status_code=400,
@@ -263,8 +270,20 @@ class RetrainingService:
                 REVIEW_STATUS_CORRECTED,
             ],
             "base_query_hash": base_query_hash,
-            "selection_strategy": "hybrid_cumulative_training_new_image_trigger",
-            "class_order": ["Atelectasis", "Effusion", "Infiltration", "No_Finding"],
+            "selection_strategy": (
+                "replay_plus_hybrid_cumulative_training_new_image_trigger"
+                if replay_samples
+                else "hybrid_cumulative_training_new_image_trigger"
+            ),
+            "confirmed_samples_count": len(confirmed_samples),
+            "replay_samples_count": len(replay_samples),
+            "replay_metadata_path": (
+                settings.retrain_replay_metadata_path if replay_samples else None
+            ),
+            "replay_samples_per_class": (
+                settings.retrain_replay_samples_per_class if replay_samples else 0
+            ),
+            "class_order": list(RETRAIN_CLASS_ORDER),
             "display_labels": {"No_Finding": "No Finding"},
             "samples": samples,
         }
@@ -284,6 +303,9 @@ class RetrainingService:
             metadata_json={
                 "class_order": payload["class_order"],
                 "selection_strategy": payload["selection_strategy"],
+                "confirmed_samples_count": len(confirmed_samples),
+                "replay_samples_count": len(replay_samples),
+                "replay_metadata_path": payload["replay_metadata_path"],
                 "sample_image_keys": [
                     self._sample_image_key(sample) for sample in samples
                 ],
@@ -545,7 +567,12 @@ class RetrainingService:
             ("\\", "app"),
             ("/", "app"),
         }:
-            return Path(*configured.parts[2:])
+            app_relative = Path(*configured.parts[2:])
+            for base_path in (Path.cwd(), Path.cwd().parent):
+                candidate = base_path / app_relative
+                if candidate.exists():
+                    return candidate
+            return app_relative
         return configured
 
     @staticmethod
@@ -566,10 +593,19 @@ class RetrainingService:
 
     @staticmethod
     def _base_query_hash(samples: list[dict[str, object]]) -> str:
-        case_ids = sorted(str(sample["case_id"]) for sample in samples)
+        sample_keys = sorted(
+            str(
+                sample.get("case_id")
+                or sample.get("image_id")
+                or sample.get("image_hash")
+                or sample.get("image_path")
+                or ""
+            )
+            for sample in samples
+        )
         payload = json.dumps(
             {
-                "case_ids": case_ids,
+                "sample_keys": sample_keys,
                 "review_statuses": [
                     REVIEW_STATUS_CONFIRMED,
                     REVIEW_STATUS_CORRECTED,
@@ -578,3 +614,66 @@ class RetrainingService:
             sort_keys=True,
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _replay_manifest_samples() -> list[dict[str, object]]:
+        metadata_path = settings.retrain_replay_metadata_path.strip()
+        if not metadata_path:
+            return []
+
+        path = RetrainingService._manifest_path_for_runtime(metadata_path)
+        if not path.exists():
+            return []
+
+        per_class_limit = max(0, settings.retrain_replay_samples_per_class)
+        if per_class_limit == 0:
+            return []
+
+        counts: Counter[str] = Counter()
+        samples: list[dict[str, object]] = []
+        with path.open(newline="", encoding="utf-8") as metadata_file:
+            reader = csv.DictReader(metadata_file)
+            for row in reader:
+                image_path = (row.get("image_path") or "").strip()
+                raw_label = (row.get("label") or "").strip()
+                if not image_path or not raw_label:
+                    continue
+
+                class_name = normalize_retraining_label(raw_label)
+                if class_name not in RETRAIN_CLASS_ORDER:
+                    continue
+                if counts[class_name] >= per_class_limit:
+                    continue
+
+                source = (row.get("source") or "sampled_from_initial_training").strip()
+                labels = {
+                    "Atelectasis": class_name == "Atelectasis",
+                    "Effusion": class_name == "Effusion",
+                    "Infiltration": class_name == "Infiltration",
+                    "No Finding": class_name == "No_Finding",
+                }
+                samples.append(
+                    {
+                        "review_id": None,
+                        "case_id": None,
+                        "image_id": None,
+                        "review_status": "replay",
+                        "reviewed_by": None,
+                        "reviewed_at": None,
+                        "image_path": image_path,
+                        "image_hash": hashlib.sha256(
+                            image_path.encode("utf-8")
+                        ).hexdigest(),
+                        "analysis_job_id": None,
+                        "source_model_id": None,
+                        "source_model_version": None,
+                        "ai_predictions": [],
+                        "doctor_labels": labels,
+                        "labels": labels,
+                        "class_name": class_name,
+                        "source": source,
+                    }
+                )
+                counts[class_name] += 1
+
+        return samples

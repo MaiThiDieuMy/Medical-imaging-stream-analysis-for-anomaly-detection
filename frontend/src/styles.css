@@ -912,6 +912,80 @@ td small {
   line-height: 1.35;
 }
 
+.model-registry-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(112px, 1fr));
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+
+.model-registry-summary button {
+  min-height: 42px;
+  justify-content: space-between;
+  border-color: #d7e4ed;
+  background: #fff;
+  font-weight: 800;
+}
+
+.model-registry-summary button.selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.model-registry-summary strong {
+  color: inherit;
+}
+
+.model-registry-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(210px, 0.42fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.model-registry-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: #314355;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.model-registry-toolbar button {
+  min-height: 40px;
+}
+
+.model-source-pill {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 22px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin: 4px 0;
+  color: #365166;
+  background: #edf3f8;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.model-source-pill.retraining {
+  color: #116149;
+  background: #dbf6ec;
+}
+
+.model-source-pill.mlflow {
+  color: #234b8d;
+  background: #e5eefc;
+}
+
+.model-source-pill.manual {
+  color: #6b4b11;
+  background: #fff3d4;
+}
+
 .selected-row {
   background: #edf7f8;
 }
@@ -1229,7 +1303,9 @@ td small {
 
   .mlops-workflow-grid,
   .mlops-actions-grid,
-  .model-action-guide {
+  .model-action-guide,
+  .model-registry-summary,
+  .model-registry-toolbar {
     grid-template-columns: 1fr;
   }
 

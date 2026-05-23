@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   activateModel,
   archiveModel,
@@ -32,6 +32,9 @@ export function AdminModelsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ModelStatusFilter>("usable");
+  const [sourceFilter, setSourceFilter] = useState<ModelSourceFilter>("all");
+  const [modelSearch, setModelSearch] = useState("");
 
   async function refreshModels() {
     const [modelList, active, registry] = await Promise.all([
@@ -142,6 +145,52 @@ export function AdminModelsPage() {
       setError(exc instanceof Error ? exc.message : "Không ẩn được model.");
     }
   }
+
+  const modelStats = useMemo(() => {
+    return {
+      total: models.length,
+      active: models.filter((model) => model.is_active && !model.archived_at).length,
+      inactive: models.filter((model) => !model.is_active && !model.archived_at).length,
+      archived: models.filter((model) => Boolean(model.archived_at)).length,
+      mlflow: models.filter((model) => Boolean(model.mlflow_run_id)).length,
+      manual: models.filter((model) => !model.mlflow_run_id).length,
+      retrained: models.filter(isRetrainedModel).length,
+    };
+  }, [models]);
+
+  const filteredModels = useMemo(() => {
+    const normalizedSearch = modelSearch.trim().toLowerCase();
+    return models.filter((model) => {
+      const statusMatches =
+        statusFilter === "all" ||
+        (statusFilter === "usable" && !model.archived_at) ||
+        (statusFilter === "active" && model.is_active && !model.archived_at) ||
+        (statusFilter === "inactive" && !model.is_active && !model.archived_at) ||
+        (statusFilter === "archived" && Boolean(model.archived_at));
+
+      const sourceMatches =
+        sourceFilter === "all" ||
+        (sourceFilter === "mlflow" && Boolean(model.mlflow_run_id)) ||
+        (sourceFilter === "manual" && !model.mlflow_run_id) ||
+        (sourceFilter === "retrained" && isRetrainedModel(model));
+
+      const searchMatches =
+        !normalizedSearch ||
+        [
+          model.model_name,
+          model.version,
+          model.model_path,
+          model.model_id,
+          model.mlflow_run_id ?? "",
+          model.mlflow_model_version ?? "",
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedSearch);
+
+      return statusMatches && sourceMatches && searchMatches;
+    });
+  }, [modelSearch, models, sourceFilter, statusFilter]);
 
   return (
     <section className="page">
@@ -342,7 +391,81 @@ export function AdminModelsPage() {
               Kích hoạt hoặc promote model chỉ ảnh hưởng các inference mới.
             </p>
           </div>
-          <span className="count-pill">{models.length} models</span>
+          <span className="count-pill">
+            {filteredModels.length}/{models.length} models
+          </span>
+        </div>
+        <div className="model-registry-summary" aria-label="Model registry summary">
+          <button
+            className={statusFilter === "usable" ? "selected" : ""}
+            onClick={() => setStatusFilter("usable")}
+            type="button"
+          >
+            Usable <strong>{modelStats.active + modelStats.inactive}</strong>
+          </button>
+          <button
+            className={statusFilter === "active" ? "selected" : ""}
+            onClick={() => setStatusFilter("active")}
+            type="button"
+          >
+            Active <strong>{modelStats.active}</strong>
+          </button>
+          <button
+            className={statusFilter === "inactive" ? "selected" : ""}
+            onClick={() => setStatusFilter("inactive")}
+            type="button"
+          >
+            Inactive <strong>{modelStats.inactive}</strong>
+          </button>
+          <button
+            className={statusFilter === "archived" ? "selected" : ""}
+            onClick={() => setStatusFilter("archived")}
+            type="button"
+          >
+            Archived <strong>{modelStats.archived}</strong>
+          </button>
+          <button
+            className={statusFilter === "all" ? "selected" : ""}
+            onClick={() => setStatusFilter("all")}
+            type="button"
+          >
+            All <strong>{modelStats.total}</strong>
+          </button>
+        </div>
+        <div className="model-registry-toolbar">
+          <label>
+            Tìm model
+            <input
+              onChange={(event) => setModelSearch(event.target.value)}
+              placeholder="Tên, version, model ID, run ID..."
+              type="search"
+              value={modelSearch}
+            />
+          </label>
+          <label>
+            Nguồn
+            <select
+              onChange={(event) =>
+                setSourceFilter(event.target.value as ModelSourceFilter)
+              }
+              value={sourceFilter}
+            >
+              <option value="all">Tất cả nguồn</option>
+              <option value="retrained">Retraining tự động ({modelStats.retrained})</option>
+              <option value="mlflow">Có MLflow run ({modelStats.mlflow})</option>
+              <option value="manual">Metadata thủ công ({modelStats.manual})</option>
+            </select>
+          </label>
+          <button
+            onClick={() => {
+              setStatusFilter("usable");
+              setSourceFilter("all");
+              setModelSearch("");
+            }}
+            type="button"
+          >
+            Reset filter
+          </button>
         </div>
         <div className="model-action-guide">
           <div>
@@ -371,10 +494,11 @@ export function AdminModelsPage() {
               </tr>
             </thead>
             <tbody>
-              {models.map((model) => (
+              {filteredModels.map((model) => (
                 <tr key={model.model_id}>
                   <td>
                     <span>{model.model_name}</span>
+                    <ModelSourcePill model={model} />
                     <small title={model.model_id}>{compactId(model.model_id)}</small>
                     <small>{model.model_path}</small>
                   </td>
@@ -435,9 +559,13 @@ export function AdminModelsPage() {
                   </td>
                 </tr>
               ))}
-              {models.length === 0 && (
+              {filteredModels.length === 0 && (
                 <tr>
-                  <td colSpan={6}>Chưa có model metadata.</td>
+                  <td colSpan={6}>
+                    {models.length === 0
+                      ? "Chưa có model metadata."
+                      : "Không có model nào khớp bộ lọc hiện tại."}
+                  </td>
                 </tr>
               )}
             </tbody>
@@ -475,4 +603,24 @@ function MetricInputs() {
       </label>
     </>
   );
+}
+
+type ModelStatusFilter = "usable" | "all" | "active" | "inactive" | "archived";
+type ModelSourceFilter = "all" | "mlflow" | "manual" | "retrained";
+
+function isRetrainedModel(model: AIModel): boolean {
+  return (
+    model.version.startsWith("rt-") ||
+    model.model_path.includes("/retrained/") ||
+    model.model_path.includes("\\retrained\\")
+  );
+}
+
+function ModelSourcePill({ model }: { model: AIModel }) {
+  const label = isRetrainedModel(model)
+    ? "Retraining"
+    : model.mlflow_run_id
+      ? "MLflow"
+      : "Manual";
+  return <span className={`model-source-pill ${label.toLowerCase()}`}>{label}</span>;
 }

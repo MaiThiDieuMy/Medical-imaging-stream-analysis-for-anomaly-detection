@@ -26,6 +26,7 @@ from app.core.security import hash_password
 from app.main import app
 from app.ml.evaluation import evaluate_multiclass_model
 from app.ml.labels import DEMO_LABELS
+from app.ml.retraining_dataset import RetrainingManifestDataset
 from app.ml.types import InferenceOutput
 from app.models.ai_model import AIModel
 from app.models.analysis_result import AnalysisResult
@@ -45,7 +46,9 @@ from app.services.reviews import ReviewService, ensure_pending_review_for_output
 @pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
     original_auto_start = settings.auto_start_retraining_job
+    original_replay_metadata_path = settings.retrain_replay_metadata_path
     settings.auto_start_retraining_job = False
+    settings.retrain_replay_metadata_path = ""
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
@@ -56,6 +59,7 @@ def db_session() -> Generator[Session, None, None]:
         session.close()
         Base.metadata.drop_all(engine)
         settings.auto_start_retraining_job = original_auto_start
+        settings.retrain_replay_metadata_path = original_replay_metadata_path
 
 
 @pytest.fixture()
@@ -65,7 +69,9 @@ def client_and_session_factory() -> Generator[
     None,
 ]:
     original_auto_start = settings.auto_start_retraining_job
+    original_replay_metadata_path = settings.retrain_replay_metadata_path
     settings.auto_start_retraining_job = False
+    settings.retrain_replay_metadata_path = ""
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -89,6 +95,7 @@ def client_and_session_factory() -> Generator[
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         settings.auto_start_retraining_job = original_auto_start
+        settings.retrain_replay_metadata_path = original_replay_metadata_path
 
 
 def _seed_user(db: Session, *, role: UserRole = UserRole.ADMIN) -> User:
@@ -414,6 +421,95 @@ def test_hybrid_retraining_triggers_on_new_images_but_trains_cumulative_dataset(
     payload = Path(manifest.manifest_path).read_text(encoding="utf-8")
     assert '"selection_strategy": "hybrid_cumulative_training_new_image_trigger"' in payload
     assert len(json.loads(payload)["samples"]) == 4
+
+
+def test_retraining_manifest_can_include_replay_samples(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_dir = tmp_path / "manifests"
+    replay_csv = tmp_path / "replay.csv"
+    replay_csv.write_text(
+        "\n".join(
+            [
+                "image_path,label,source",
+                "/app/artifacts/datasets/replay/Atelectasis/a.png,Atelectasis,sampled_from_initial_training",
+                "/app/artifacts/datasets/replay/Effusion/e.png,Effusion,sampled_from_initial_training",
+                "/app/artifacts/datasets/replay/Infiltration/i.png,Infiltration,sampled_from_initial_training",
+                "/app/artifacts/datasets/replay/No Finding/n.png,No Finding,sampled_from_initial_training",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "retrain_manifest_dir", str(manifest_dir))
+    monkeypatch.setattr(settings, "retrain_replay_metadata_path", str(replay_csv))
+    monkeypatch.setattr(settings, "retrain_replay_samples_per_class", 1)
+    admin = _seed_user(db_session, role=UserRole.ADMIN)
+    _confirm_case(
+        db_session,
+        _seed_completed_case(db_session, positive_label="Effusion"),
+        admin,
+    )
+
+    manifest = RetrainingService(db_session).export_manifest_for_job()
+
+    payload = json.loads(Path(str(manifest["manifest_path"])).read_text(encoding="utf-8"))
+    assert payload["confirmed_samples_count"] == 1
+    assert payload["replay_samples_count"] == 4
+    assert payload["samples_count"] == 5
+    assert payload["selection_strategy"] == (
+        "replay_plus_hybrid_cumulative_training_new_image_trigger"
+    )
+    assert payload["label_distribution"] == {
+        "Atelectasis": 1,
+        "Effusion": 2,
+        "Infiltration": 1,
+        "No_Finding": 1,
+    }
+
+
+def test_retraining_task_prefers_fixed_eval_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def write_manifest(path: Path, label: str) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "samples": [
+                        {
+                            "image_path": f"/tmp/{label}.png",
+                            "class_name": label,
+                            "labels": {
+                                "Atelectasis": label == "Atelectasis",
+                                "Effusion": label == "Effusion",
+                                "Infiltration": label == "Infiltration",
+                                "No Finding": label == "No_Finding",
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    train_manifest = tmp_path / "train.json"
+    eval_manifest = tmp_path / "eval.json"
+    write_manifest(train_manifest, "Atelectasis")
+    write_manifest(eval_manifest, "Effusion")
+    monkeypatch.setattr(settings, "retrain_eval_manifest_path", str(eval_manifest))
+
+    from app.tasks.retraining import _training_and_evaluation_datasets
+
+    train_dataset, eval_dataset, evaluation_source, warning = (
+        _training_and_evaluation_datasets(RetrainingManifestDataset(train_manifest))
+    )
+
+    assert len(train_dataset) == 1
+    assert len(eval_dataset) == 1
+    assert evaluation_source == str(eval_manifest)
+    assert warning is None
 
 
 def test_evaluate_multiclass_model_returns_expected_metrics() -> None:
