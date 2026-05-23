@@ -3,8 +3,10 @@ import {
   checkRetraining,
   confirmReview,
   correctReview,
+  createDatasetManifest,
   exportRetrainingManifest,
   getRetrainingSummary,
+  listDatasetManifests,
   listPendingReviews,
   listRetrainingJobs,
   triggerRetraining,
@@ -14,6 +16,7 @@ import { ResultTable } from "../components/ResultTable";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   CaseReview,
+  DatasetManifest,
   LabelCorrection,
   RetrainingJob,
   RetrainingSummary,
@@ -32,17 +35,27 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
   const [reviews, setReviews] = useState<CaseReview[]>([]);
   const [summary, setSummary] = useState<RetrainingSummary | null>(null);
   const [jobs, setJobs] = useState<RetrainingJob[]>([]);
+  const [manifests, setManifests] = useState<DatasetManifest[]>([]);
   const [corrections, setCorrections] = useState<CorrectionState>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const latestUnlockedManifest =
+    summary?.latest_manifest &&
+    !summary.latest_manifest.is_locked &&
+    summary.latest_manifest.samples_count >= summary.min_confirmed_samples
+      ? summary.latest_manifest
+      : null;
 
   async function refreshData() {
     const pending = await listPendingReviews();
     const retrainingSummary = isAdmin ? await getRetrainingSummary() : null;
     const retrainingJobs = isAdmin ? await listRetrainingJobs() : [];
+    const datasetManifests = isAdmin ? await listDatasetManifests() : [];
     setReviews(pending);
     setSummary(retrainingSummary);
     setJobs(retrainingJobs);
+    setManifests(datasetManifests);
     setCorrections((current) => {
       const next = { ...current };
       for (const review of pending) {
@@ -61,7 +74,11 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
 
   useEffect(() => {
     refreshData().catch((exc) =>
-      setError(exc instanceof Error ? exc.message : "Không tải được danh sách cần duyệt."),
+      setError(
+        exc instanceof Error
+          ? exc.message
+          : "Không tải được danh sách cần duyệt.",
+      ),
     );
   }, [isAdmin]);
 
@@ -70,7 +87,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     setMessage(null);
     try {
       await confirmReview(reviewId);
-      setMessage("Đã xác nhận AI đúng. Ca này được đưa vào retraining buffer.");
+      setMessage("Đã xác nhận nhãn AI. Ca này được tính là training-ready.");
       await refreshData();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không xác nhận được review.");
@@ -86,7 +103,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
         confirmed_positive: Boolean(corrections[reviewId]?.[label]),
       }));
       await correctReview(reviewId, labels);
-      setMessage("Đã lưu nhãn bác sĩ chọn. Ca này được đưa vào retraining buffer.");
+      setMessage("Đã lưu nhãn bác sĩ chọn. Ca này được tính là training-ready.");
       await refreshData();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không lưu được nhãn đã chọn.");
@@ -97,7 +114,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     setError(null);
     setMessage(null);
     if (!isAdmin) {
-      setMessage("Chỉ Quản trị viên được kiểm tra retraining summary.");
+      setMessage("Chỉ Quản trị viên được kiểm tra retraining.");
       return;
     }
     try {
@@ -106,6 +123,24 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
       setSummary(result);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không kiểm tra được retraining.");
+    }
+  }
+
+  async function handleCreateManifest() {
+    setError(null);
+    setMessage(null);
+    if (!isAdmin) {
+      setMessage("Chỉ Quản trị viên được tạo dataset manifest.");
+      return;
+    }
+    try {
+      const manifest = await createDatasetManifest();
+      setMessage(
+        `Đã tạo manifest ${compactId(manifest.manifest_id)} với ${manifest.samples_count} mẫu.`,
+      );
+      await refreshData();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Không tạo được manifest.");
     }
   }
 
@@ -121,6 +156,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
       setMessage(
         `${result.message} Samples=${result.samples_count}; path=${result.manifest_path}`,
       );
+      await refreshData();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không export được manifest.");
     }
@@ -130,15 +166,15 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
     setError(null);
     setMessage(null);
     if (!isAdmin) {
-      setMessage("Chỉ Quản trị viên được trigger retraining.");
+      setMessage("Chỉ Quản trị viên được bắt đầu retraining.");
       return;
     }
     try {
-      const job = await triggerRetraining();
+      const job = await triggerRetraining(latestUnlockedManifest?.manifest_id);
       setMessage(`Đã tạo retraining job ${compactId(job.retraining_job_id)}.`);
       await refreshData();
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Không trigger được retraining.");
+      setError(exc instanceof Error ? exc.message : "Không bắt đầu được retraining.");
     }
   }
 
@@ -157,8 +193,8 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
         <div>
           <h2>Duyệt ca cần xác nhận</h2>
           <p>
-            Xem các ca AI chưa đủ chắc chắn, xác nhận nếu AI đúng hoặc gán lại
-            nhãn để tạo dữ liệu huấn luyện đáng tin cậy.
+            Xác nhận hoặc sửa nhãn để tạo dữ liệu huấn luyện đáng tin cậy cho
+            vòng đời MLOps.
           </p>
         </div>
         <StatusBadge value={summary?.should_trigger_retraining ?? false} />
@@ -167,73 +203,152 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
       {error && <Message tone="error">{error}</Message>}
       {message && <Message tone="success">{message}</Message>}
 
-      <div className="panel">
+      <div className="panel mlops-readiness-panel">
         <div className="section-heading">
           <div>
             <h3>Retraining readiness</h3>
             <p className="muted">
-              Chỉ các ca đã được xác nhận hoặc sửa nhãn mới được tính là
-              training-ready.
+              Chỉ case đã được doctor/admin confirmed hoặc corrected mới được
+              dùng để tạo dataset manifest.
             </p>
           </div>
-          <div className="actions">
-            <button
-              disabled={!isAdmin}
-              onClick={() => void handleRetrainingCheck()}
-              type="button"
-            >
-              Kiểm tra điều kiện
-            </button>
-            <button
-              disabled={!isAdmin}
-              onClick={() => void handleExportManifest()}
-              type="button"
-            >
-              Xuất manifest
-            </button>
-            <button
-              className="primary"
-              disabled={!isAdmin || !summary?.should_trigger_retraining}
-              onClick={() => void handleTriggerRetraining()}
-              type="button"
-            >
-              Bắt đầu retraining
-            </button>
-          </div>
+          <StatusBadge
+            value={summary?.should_trigger_retraining ? "ready" : "collecting"}
+          />
         </div>
+
         {!isAdmin ? (
           <p className="muted">
-            Bác sĩ/KTV chỉ cần duyệt nhãn. Phần retraining summary dành cho
-            Quản trị viên.
+            Bác sĩ/KTV chỉ cần duyệt nhãn. Phần retraining dành cho Quản trị viên.
           </p>
         ) : summary ? (
-          <div className="summary-grid">
-            <SummaryItem label="Tối thiểu" value={summary.min_confirmed_samples} />
-            <SummaryItem label="Chờ duyệt" value={summary.pending_reviews} />
-            <SummaryItem label="Đã xác nhận" value={summary.confirmed_reviews} />
-            <SummaryItem label="Đã sửa nhãn" value={summary.corrected_reviews} />
-            <SummaryItem label="Training-ready" value={summary.training_ready_cases} />
-            <SummaryItem
-              label="Có thể train"
-              value={summary.should_trigger_retraining ? "Có" : "Chưa"}
-            />
-            <SummaryItem
-              label="Job đang chạy"
-              value={
-                summary.running_job
-                  ? compactId(summary.running_job.retraining_job_id)
-                  : "-"
-              }
-            />
-            <SummaryItem
-              label="Job mới nhất"
-              value={
-                summary.latest_job
-                  ? compactId(summary.latest_job.retraining_job_id)
-                  : "-"
-              }
-            />
-          </div>
+          <>
+            <div className="mlops-kpi-row">
+              <ReadinessKpi
+                label="Mẫu mới"
+                value={`${summary.new_training_ready_cases}/${summary.min_confirmed_samples}`}
+                tone={summary.should_trigger_retraining ? "success" : "neutral"}
+              />
+              <ReadinessKpi
+                label="Tổng đã xác nhận"
+                value={summary.training_ready_cases}
+              />
+              <ReadinessKpi
+                label="Đã dùng train"
+                value={summary.used_training_ready_cases}
+              />
+              <ReadinessKpi label="Chờ duyệt" value={summary.pending_reviews} />
+              <ReadinessKpi label="Confirmed" value={summary.confirmed_reviews} />
+              <ReadinessKpi label="Corrected" value={summary.corrected_reviews} />
+              <ReadinessKpi
+                label="Manifest mới nhất"
+                value={
+                  summary.latest_manifest
+                    ? compactId(summary.latest_manifest.manifest_id)
+                    : "-"
+                }
+                title={summary.latest_manifest?.manifest_id}
+              />
+              <ReadinessKpi
+                label="Job mới nhất"
+                value={
+                  summary.latest_job
+                    ? compactId(summary.latest_job.retraining_job_id)
+                    : "-"
+                }
+                title={summary.latest_job?.retraining_job_id}
+              />
+            </div>
+
+            <div className="mlops-workflow-grid">
+              <div className="mlops-step-list">
+                <WorkflowStep
+                  number="1"
+                  title="Duyệt nhãn"
+                  state={
+                    summary.training_ready_cases >= summary.min_confirmed_samples
+                      ? "done"
+                      : "active"
+                  }
+                />
+                <WorkflowStep
+                  number="2"
+                  title="Tạo manifest"
+                  state={summary.latest_manifest ? "done" : "pending"}
+                />
+                <WorkflowStep
+                  number="3"
+                  title="Fine-tune async"
+                  state={summary.running_job ? "active" : "pending"}
+                />
+                <WorkflowStep
+                  number="4"
+                  title="Review candidate"
+                  state={summary.latest_job?.candidate_model_id ? "done" : "pending"}
+                />
+              </div>
+
+              <div className="label-distribution-card">
+                <h4>Phân bố nhãn mới chưa retrain</h4>
+                <div className="label-bars">
+                  {Object.entries(summary.new_label_distribution).length === 0 ? (
+                    <p className="muted">Chưa có mẫu mới chưa retrain.</p>
+                  ) : (
+                    Object.entries(summary.new_label_distribution).map(([label, count]) => (
+                      <div className="label-bar-row" key={label}>
+                        <span>{label}</span>
+                        <div>
+                          <strong>{count}</strong>
+                          <i
+                            style={{
+                              width: `${Math.max(
+                                10,
+                                (count /
+                                  Math.max(1, summary.new_training_ready_cases)) *
+                                  100,
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mlops-actions-grid">
+              <ActionButton
+                disabled={!isAdmin}
+                label="Kiểm tra điều kiện"
+                onClick={() => void handleRetrainingCheck()}
+                title="Refresh số mẫu training-ready, phân bố nhãn, job và manifest mới nhất."
+              />
+              <ActionButton
+                disabled={!isAdmin || !summary.should_trigger_retraining}
+                label="Tạo manifest"
+                onClick={() => void handleCreateManifest()}
+                title="Tạo snapshot dataset versioned từ các case confirmed/corrected hiện tại."
+              />
+              <ActionButton
+                disabled={!isAdmin}
+                label="Xuất manifest"
+                onClick={() => void handleExportManifest()}
+                title="Export manifest JSON từ dữ liệu confirmed/corrected. Dùng để xem hoặc debug lineage."
+              />
+              <ActionButton
+                primary
+                disabled={!isAdmin || !summary.should_trigger_retraining}
+                label={
+                  summary.auto_start_retraining_job
+                    ? "Auto retraining bật"
+                    : "Bắt đầu retraining"
+                }
+                onClick={() => void handleTriggerRetraining()}
+                title="Tạo retraining job, lock manifest, enqueue Celery fine-tune và log kết quả vào MLflow."
+              />
+            </div>
+          </>
         ) : (
           <p className="muted">Chưa có summary.</p>
         )}
@@ -249,6 +364,7 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
                   <th>Job</th>
                   <th>Status</th>
                   <th>Samples</th>
+                  <th>Manifest</th>
                   <th>Candidate</th>
                   <th>F1</th>
                 </tr>
@@ -265,6 +381,9 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
                     <td>
                       {job.training_samples_count}/{job.min_required_samples}
                     </td>
+                    <td title={job.dataset_manifest_id ?? ""}>
+                      {compactId(job.dataset_manifest_id)}
+                    </td>
                     <td title={job.candidate_model_id ?? ""}>
                       {compactId(job.candidate_model_id)}
                     </td>
@@ -277,11 +396,44 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
         </div>
       )}
 
+      {isAdmin && manifests.length > 0 && (
+        <div className="panel">
+          <h3>Dataset manifests</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Manifest</th>
+                  <th>Version</th>
+                  <th>Samples</th>
+                  <th>Locked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {manifests.slice(0, 5).map((manifest) => (
+                  <tr key={manifest.manifest_id}>
+                    <td title={manifest.manifest_id}>
+                      {compactId(manifest.manifest_id)}
+                    </td>
+                    <td>{manifest.version}</td>
+                    <td>{manifest.samples_count}</td>
+                    <td>{manifest.is_locked ? "Có" : "Chưa"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="review-list">
         {reviews.length === 0 ? (
           <div className="panel empty-state">
             <strong>Không có ca cần duyệt</strong>
-            <p>Tất cả ca hiện tại đã được xử lý hoặc chưa có ca nào cần bác sĩ xác nhận.</p>
+            <p>
+              Tất cả case hiện tại đã được xử lý hoặc chưa có case nào cần bác sĩ
+              xác nhận.
+            </p>
           </div>
         ) : (
           reviews.map((review) => (
@@ -337,11 +489,64 @@ export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
   );
 }
 
-function SummaryItem({ label, value }: { label: string; value: number | string }) {
+function ReadinessKpi({
+  label,
+  title,
+  tone = "neutral",
+  value,
+}: {
+  label: string;
+  title?: string | null;
+  tone?: "neutral" | "success";
+  value: number | string;
+}) {
   return (
-    <div className="summary-item">
+    <div className={`readiness-kpi ${tone}`} title={title ?? undefined}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function WorkflowStep({
+  number,
+  state,
+  title,
+}: {
+  number: string;
+  state: "active" | "done" | "pending";
+  title: string;
+}) {
+  return (
+    <div className={`workflow-step ${state}`}>
+      <span>{number}</span>
+      <strong>{title}</strong>
+    </div>
+  );
+}
+
+function ActionButton({
+  disabled,
+  label,
+  onClick,
+  primary = false,
+  title,
+}: {
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+  title: string;
+}) {
+  return (
+    <button
+      className={primary ? "primary action-button" : "action-button"}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }

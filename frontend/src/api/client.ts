@@ -8,6 +8,8 @@ import type {
   CaseReview,
   CaseReviewStatusResponse,
   CaseStatusResponse,
+  DatasetManifest,
+  DatasetSummary,
   JobStatusResponse,
   LabelCorrection,
   LoginCredentials,
@@ -347,6 +349,21 @@ export function getRetrainingSamples(): Promise<TrainingReadySample[]> {
   return requestJson<TrainingReadySample[]>("/admin/mlops/retraining/samples");
 }
 
+export function getDatasetSummary(): Promise<DatasetSummary> {
+  return requestJson<DatasetSummary>("/admin/mlops/dataset/summary");
+}
+
+export function listDatasetManifests(): Promise<DatasetManifest[]> {
+  return requestJson<DatasetManifest[]>("/admin/mlops/dataset/manifests");
+}
+
+export function createDatasetManifest(): Promise<DatasetManifest> {
+  return requestJson<DatasetManifest>("/admin/mlops/dataset/manifests", {
+    method: "POST",
+    body: {},
+  });
+}
+
 export function checkRetraining(): Promise<RetrainingCheckResponse> {
   return requestJson<RetrainingCheckResponse>("/admin/mlops/retraining/check", {
     method: "POST",
@@ -357,10 +374,10 @@ export function listRetrainingJobs(): Promise<RetrainingJob[]> {
   return requestJson<RetrainingJob[]>("/admin/mlops/retraining/jobs");
 }
 
-export function triggerRetraining(): Promise<RetrainingJob> {
+export function triggerRetraining(manifestId?: string | null): Promise<RetrainingJob> {
   return requestJson<RetrainingJob>("/admin/mlops/retraining/trigger", {
     method: "POST",
-    body: {},
+    body: { manifest_id: manifestId ?? null },
   });
 }
 

@@ -257,15 +257,47 @@ export type TrainingReadySample = {
   confirmed_labels: ConfirmedLabelItem[];
 };
 
+export type DatasetManifest = {
+  manifest_id: string;
+  manifest_name: string;
+  version: string;
+  manifest_path: string;
+  samples_count: number;
+  label_distribution: Record<string, number>;
+  source_review_statuses: string[];
+  base_query_hash: string;
+  is_locked: boolean;
+  used_by_retraining_job_id: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_by_id: string | null;
+  created_at: string;
+};
+
+export type DatasetSummary = {
+  training_ready_cases: number;
+  new_training_ready_cases: number;
+  used_training_ready_cases: number;
+  label_distribution: Record<string, number>;
+  new_label_distribution: Record<string, number>;
+  manifest_count: number;
+  latest_manifest: DatasetManifest | null;
+};
+
 export type RetrainingSummary = {
   min_confirmed_samples: number;
   pending_reviews: number;
   confirmed_reviews: number;
   corrected_reviews: number;
   training_ready_cases: number;
+  new_training_ready_cases: number;
+  used_training_ready_cases: number;
+  auto_start_retraining_job: boolean;
+  label_distribution: Record<string, number>;
+  new_label_distribution: Record<string, number>;
   should_trigger_retraining: boolean;
   running_job: RetrainingJob | null;
   latest_job: RetrainingJob | null;
+  latest_manifest: DatasetManifest | null;
 };
 
 export type RetrainingCheckResponse = RetrainingSummary & {
@@ -277,6 +309,7 @@ export type RetrainingJob = {
   status: string;
   base_model_id: string;
   candidate_model_id: string | null;
+  dataset_manifest_id: string | null;
   manifest_path: string | null;
   output_model_path: string | null;
   mlflow_run_id: string | null;
@@ -295,6 +328,7 @@ export type RetrainingJob = {
 };
 
 export type ManifestExportResponse = {
+  manifest_id: string;
   manifest_path: string;
   samples_count: number;
   message: string;

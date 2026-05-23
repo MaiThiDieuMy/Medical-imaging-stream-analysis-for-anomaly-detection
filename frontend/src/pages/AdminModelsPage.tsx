@@ -52,14 +52,15 @@ export function AdminModelsPage() {
 
   async function handleRegisterCandidate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setError(null);
     setMessage(null);
     setPromotion(null);
     setMlflowRegistration(null);
     try {
       setLoading(true);
-      await registerCandidate(modelPayloadFromForm(event.currentTarget));
-      event.currentTarget.reset();
+      await registerCandidate(modelPayloadFromForm(form));
+      form.reset();
       setMessage("Đã đăng ký candidate model trong cơ sở dữ liệu.");
       await refreshModels();
     } catch (exc) {
@@ -71,6 +72,7 @@ export function AdminModelsPage() {
 
   async function handleRegisterMlflow(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setError(null);
     setMessage(null);
     setPromotion(null);
@@ -78,9 +80,9 @@ export function AdminModelsPage() {
     try {
       setLoading(true);
       const result = await registerLocalCheckpointToMlflow(
-        mlflowPayloadFromForm(event.currentTarget),
+        mlflowPayloadFromForm(form),
       );
-      event.currentTarget.reset();
+      form.reset();
       setMlflowRegistration(result);
       setMessage("Đã log checkpoint và đăng ký model version lên MLflow.");
       await refreshModels();
@@ -342,6 +344,20 @@ export function AdminModelsPage() {
           </div>
           <span className="count-pill">{models.length} models</span>
         </div>
+        <div className="model-action-guide">
+          <div>
+            <strong>Kích hoạt</strong>
+            <span>Bỏ qua policy, đặt model làm active cho inference mới.</span>
+          </div>
+          <div>
+            <strong>Promote</strong>
+            <span>So sánh metric với active model rồi mới kích hoạt nếu đạt.</span>
+          </div>
+          <div>
+            <strong>Ẩn model</strong>
+            <span>Ẩn metadata khỏi luồng sử dụng, không xóa lịch sử inference.</span>
+          </div>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -394,6 +410,7 @@ export function AdminModelsPage() {
                     <button
                       disabled={model.is_active || Boolean(model.archived_at)}
                       onClick={() => void handleActivate(model.model_id)}
+                      title="Đặt model này làm active ngay. Chỉ ảnh hưởng các inference mới."
                       type="button"
                     >
                       Kích hoạt
@@ -401,6 +418,7 @@ export function AdminModelsPage() {
                     <button
                       disabled={model.is_active || Boolean(model.archived_at)}
                       onClick={() => void handlePromote(model.model_id)}
+                      title="Chỉ active model nếu candidate đạt policy metric so với model hiện tại."
                       type="button"
                     >
                       Promote
@@ -409,6 +427,7 @@ export function AdminModelsPage() {
                       className="danger"
                       disabled={model.is_active || Boolean(model.archived_at)}
                       onClick={() => void handleArchive(model.model_id)}
+                      title="Ẩn model metadata. Không xóa checkpoint hoặc kết quả inference cũ."
                       type="button"
                     >
                       Ẩn model
