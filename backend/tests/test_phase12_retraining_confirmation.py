@@ -242,6 +242,7 @@ def test_retraining_summary_counts_only_reviews_after_latest_completed_job(
 ) -> None:
     monkeypatch.setattr(settings, "retrain_min_confirmed_samples", 2)
     monkeypatch.setattr(settings, "evaluation_set_dir", str(tmp_path / "missing"))
+    monkeypatch.setattr(settings, "training_seed_dir", str(tmp_path / "missing_seed"))
     model = _seed_active_model(db_session)
     old_case = _seed_completed_case(db_session, positive_label="Effusion")
     new_case = _seed_completed_case(db_session, positive_label="Atelectasis")
@@ -274,6 +275,7 @@ def test_retraining_summary_counts_only_reviews_after_latest_completed_job(
 
     assert summary["confirmed_reviews"] == 2
     assert summary["training_ready_cases"] == 1
+    assert summary["total_finetune_samples"] == 2
     assert summary["missing_confirmed_samples"] == 1
     assert summary["should_trigger_retraining"] is False
 

@@ -1,175 +1,333 @@
 # Medical Imaging Stream Analysis for Anomaly Detection
 
-Development-ready chest X-ray streaming inference system with a lightweight MLOps review loop. The project supports a hospital-style workflow where Doctor/KTV users upload a chest X-ray, request AI analysis, track asynchronous processing, review results, and where Admin users manage models, users, reviews, and monitoring.
+Development-ready system for streaming chest X-ray analysis, asynchronous AI inference, review workflows, and lightweight MLOps operations.
 
-This is a development and presentation demo. The local model is not clinically certified.
+> This repository is for development, testing, and demonstration. The model and workflow are not clinically certified and must not be used for real medical diagnosis without proper validation, governance, and regulatory approval.
 
-## Main Features
+## Overview
 
-- Login with Doctor/KTV and Admin roles.
-- Role-specific dashboards and navigation for clinical and admin workflows.
-- Chest X-ray upload with patient metadata and image preview.
-- Cache check by `image_hash + active model` before saving duplicate images or creating jobs.
-- Asynchronous inference with Celery and Redis.
-- Four X-ray classes: No Finding, Effusion, Infiltration, Atelectasis.
-- Local real-model mode uses the Kaggle MobileNetV3-Small checkpoint at `artifacts/models/best_model.pth`.
-- One `AnalysisResult` row per label.
-- Admin model management with candidate registration and promotion by `f1_score`.
-- MLflow Tracking and Model Registry integration for local checkpoint registration.
-- Review workflow for uncertain cases and manual confirmation/correction for any completed case.
-- Raw AI predictions, including high-confidence predictions, never become training-ready until doctor/admin confirmation.
-- Confirmed/corrected labels only become training-ready after doctor/admin review evidence is stored.
-- Stored-image retrieval, case history/detail, and browser-printable HTML reports.
+The application supports a hospital-style workflow:
+
+1. Doctor/KTV users log in and upload a chest X-ray with patient metadata.
+2. The backend validates the request, computes an image hash, checks the cache, stores the image, and creates an analysis job.
+3. Celery workers process inference asynchronously using the active model.
+4. Results are stored per label and shown in the web UI.
+5. Doctor/Admin users confirm or correct AI results before data becomes retraining-ready.
+6. Admin users manage users, models, reviews, retraining, and monitoring.
+
+Core labels:
+
+- `Atelectasis`
+- `Effusion`
+- `Infiltration`
+- `No_Finding`
+
+## Features
+
+- Role-based login for Doctor/KTV and Admin users.
+- Chest X-ray upload with patient metadata, preview, validation, and duplicate cache checks.
+- Async inference pipeline with FastAPI, Celery, Redis, PostgreSQL, and MinIO.
+- Local MobileNetV3-Small checkpoint support through PyTorch/TorchVision.
+- One `AnalysisResult` row per model label.
+- Case history, case detail, stored image retrieval, and browser-printable reports.
+- Review workflow for uncertain cases and manual confirmation/correction for completed cases.
 - Retraining manifest export from confirmed/corrected labels only.
-- Operations monitoring with Prometheus, Grafana, Loki/Promtail logs, cAdvisor,
-  Flower, RedisInsight, Redis exporter, and PostgreSQL exporter.
-- Soft archive/deactivate actions for cases, users, and model metadata. Historical analysis results are not hard-deleted.
-
-## Architecture Summary
-
-The central table is `xray_cases`. Each case links patient metadata, the uploaded image, an asynchronous analysis job, AI results, and optional review records.
-
-Analyze flow:
-
-1. Doctor/KTV logs in and uploads image metadata.
-2. Backend validates metadata/file and computes `image_hash`.
-3. Backend loads the active `AIModel`.
-4. Backend checks cache by `image_hash + active model_id`.
-5. Cache hit returns existing results immediately.
-6. Cache miss saves/updates patient, uploads the image to MinIO, creates `XRayCase`, `XRayImage`, `AnalysisJob`, and enqueues Celery.
-7. Worker downloads the image from MinIO, loads the active model, runs inference, saves four label results, updates job/case status, and creates review records for uncertain cases.
+- Admin model registry APIs and MLflow tracking/registry integration.
+- Candidate model registration, promotion gates, and active model management.
+- Observability stack with Prometheus, Grafana, Loki, Promtail, Flower, RedisInsight, cAdvisor, Redis exporter, and PostgreSQL exporter.
+- Soft archive/deactivation behavior for cases, users, and model metadata.
 
 ## Tech Stack
 
-- Backend: FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2
-- Queue: Celery, Redis
-- Database: PostgreSQL
-- Storage: MinIO object storage for uploaded X-ray images
-- ML: PyTorch/TorchVision inference with MobileNetV3-Small local checkpoint support
-- MLOps foundation: MLflow tracking/registry APIs, admin model registry APIs, review/retraining buffer APIs
-- Frontend: React + Vite + TypeScript
-- Deployment: Docker Compose
+| Area | Technology |
+| --- | --- |
+| Backend API | FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic |
+| Queue | Celery, Redis |
+| Database | PostgreSQL |
+| Object storage | MinIO |
+| ML inference/retraining | PyTorch, TorchVision, Pillow |
+| MLOps | MLflow Tracking and Model Registry |
+| Frontend | React 19, Vite 7, TypeScript, Vitest |
+| Monitoring | Prometheus, Grafana, Loki, Promtail, Flower, cAdvisor |
+| Packaging | Docker Compose |
 
-## Folder Structure
+## System Architecture
 
-```text
-backend/
-  app/api/          FastAPI routes
-  app/core/         config, database, auth/security
-  app/models/       SQLAlchemy models
-  app/schemas/      Pydantic schemas
-  app/crud/         database operations
-  app/services/     business logic
-  app/tasks/        Celery tasks
-  app/ml/           preprocessing, model loading, inference
-  app/mlops/        metric helpers
-  app/monitoring/   lightweight counters
-  scripts/          seed and smoke scripts
-infra/
-  prometheus/       scrape config and alert rules
-  grafana/          Prometheus/Loki datasource and dashboard provisioning
-  loki/             local Loki config for Docker logs
-  promtail/         Docker log scraping config
-frontend/
-  src/api/          typed API client
-  src/pages/        app screens
-  src/components/   shared UI
-  src/types/        TypeScript API types
-docs/
-  SYSTEM_DESIGN.md
-  WORKFLOW.md
-  DEMO_GUIDE.md
-artifacts/
-  models/           local weights placeholder, ignored except README
-  sample_images/    local demo images placeholder, ignored except README
-  training_seed/    local labeled seed images, ignored except README
-  retraining_manifests/ generated manifests, ignored except README
-  evaluation_set/   local fixed evaluation images, ignored except README
+```mermaid
+flowchart LR
+    User[Doctor/KTV/Admin] --> FE[React + Vite frontend]
+    FE --> API[FastAPI backend]
+
+    API --> DB[(PostgreSQL)]
+    API --> S3[(MinIO image storage)]
+    API --> Redis[(Redis broker/result backend)]
+    API --> MLflow[MLflow tracking/registry]
+
+    Redis --> Worker[Celery worker]
+    Worker --> S3
+    Worker --> DB
+    Worker --> Model[Active PyTorch model checkpoint]
+    Worker --> MLflow
+
+    API --> Metrics[/Prometheus metrics/]
+    Metrics --> Prometheus[Prometheus]
+    Prometheus --> Grafana[Grafana dashboards]
+    Worker --> Flower[Flower]
+    Redis --> RedisInsight[RedisInsight]
+    DockerLogs[Docker logs] --> Promtail[Promtail]
+    Promtail --> Loki[Loki]
+    Loki --> Grafana
 ```
 
-## Demo Accounts
+### Main Request Flow
 
-Seed these accounts with `backend/scripts/seed_demo_users.py`:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Doctor/KTV
+    participant FE as Frontend
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant S3 as MinIO
+    participant Q as Redis/Celery
+    participant W as Worker
+    participant M as PyTorch Model
 
-- Admin: `admin_demo` / `admin123`
-- Doctor/KTV: `doctor_demo` / `doctor123`
+    U->>FE: Upload X-ray + patient metadata
+    FE->>API: POST analysis request
+    API->>API: Validate file and compute image_hash
+    API->>DB: Check image_hash + active model cache
+    alt Cache hit
+        DB-->>API: Existing case/results
+        API-->>FE: Return cached results
+    else Cache miss
+        API->>S3: Store image
+        API->>DB: Create patient/case/image/job
+        API->>Q: Enqueue inference job
+        API-->>FE: Return queued case/job
+        W->>Q: Consume job
+        W->>S3: Download image
+        W->>M: Run preprocessing + inference
+        W->>DB: Save label results and update status
+        FE->>API: Poll case/job status
+        API-->>FE: Return completed results
+    end
+```
 
-These are demo credentials only. Do not put real credentials in `.env`.
+## Repository Structure
 
-## Run With Docker
+```text
+.
++-- backend/
+|   +-- app/
+|   |   +-- api/          FastAPI routers
+|   |   +-- core/         settings, database, auth/security
+|   |   +-- crud/         database operations
+|   |   +-- ml/           preprocessing, model loading, inference, evaluation
+|   |   +-- mlops/        MLflow registry and metric helpers
+|   |   +-- models/       SQLAlchemy models
+|   |   +-- monitoring/   Prometheus metric helpers
+|   |   +-- schemas/      Pydantic schemas
+|   |   +-- services/     business logic
+|   |   +-- tasks/        Celery app and tasks
+|   +-- alembic/          database migrations
+|   +-- scripts/          seed, smoke, model, retraining utilities
+|   +-- tests/            backend pytest suite
++-- frontend/
+|   +-- src/api/          typed API client
+|   +-- src/components/   shared UI components
+|   +-- src/pages/        application pages
+|   +-- src/types/        TypeScript API types
+|   +-- src/utils/        frontend helpers and tests
++-- infra/
+|   +-- grafana/          dashboard and datasource provisioning
+|   +-- loki/             Loki config
+|   +-- prometheus/       scrape config and alerts
+|   +-- promtail/         Docker log scraping config
++-- artifacts/            local-only model/data/generated artifacts
++-- docs/                 design, workflow, demo guide
++-- notebooks/            training notebook(s)
++-- scripts/              project-level utility scripts
++-- docker-compose.yml
++-- Dockerfile.backend
++-- Dockerfile.frontend
+```
 
-```bash
+## Setup
+
+### Prerequisites
+
+- Windows with PowerShell.
+- Docker Desktop with Docker Compose.
+- Python 3.11.
+- Node.js 22 or compatible current LTS.
+- Git.
+
+### Environment
+
+Create a local `.env` from the example:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Review at least these values before running:
+
+- `AUTH_SECRET_KEY`
+- `DATABASE_URL`
+- `CELERY_BROKER_URL`
+- `CELERY_RESULT_BACKEND`
+- `MODEL_SOURCE`
+- `MODEL_WEIGHTS_PATH`
+- `ALLOW_DEMO_MODEL`
+- `MINIO_*`
+- `MLFLOW_*`
+- `VITE_API_BASE_URL`
+
+Do not commit `.env`, real credentials, patient data, datasets, model weights, or generated artifacts.
+
+### Demo Accounts
+
+Seeded by `backend/scripts/seed_demo_users.py`:
+
+| Role | Username | Password |
+| --- | --- | --- |
+| Admin | `admin_demo` | `admin123` |
+| Doctor/KTV | `doctor_demo` | `doctor123` |
+
+These credentials are for local development only.
+
+## Running
+
+### Docker
+
+Start the full stack:
+
+```powershell
 docker compose up -d --build
 docker compose exec backend alembic upgrade head
 docker compose exec backend python scripts/seed_demo_users.py
 docker compose exec backend python scripts/seed_demo_model.py
 ```
 
-The default Docker Compose ML config expects the local checkpoint at:
+Open:
 
-```text
-artifacts/models/best_model.pth
-```
-
-This file is mounted into backend and Celery containers at `/app/artifacts/models/best_model.pth`. It is ignored by Git and is not copied into the Docker image. Retrained candidate checkpoints are written under `artifacts/retrained_models/` and stay ignored by Git.
-
-Local labeled data folders are mounted into backend/Celery containers:
-
-```text
-artifacts/training_seed/Atelectasis/
-artifacts/training_seed/Effusion/
-artifacts/training_seed/Infiltration/
-artifacts/training_seed/No_Finding/
-
-artifacts/evaluation_set/Atelectasis/
-artifacts/evaluation_set/Effusion/
-artifacts/evaluation_set/Infiltration/
-artifacts/evaluation_set/No_Finding/
-```
-
-`training_seed` is used for fine-tuning together with new doctor/admin confirmed
-or corrected DB cases, but it does not count toward retraining threshold `N`.
-`evaluation_set` is used only for evaluation, never training. Do not commit image
-data or model weights.
-
-## URLs
-
-- Frontend: http://localhost:5173
-- Backend API server root: http://localhost:8000
-- Backend Swagger: http://localhost:8000/docs
-- Backend health: http://localhost:8000/health
-- API v1 health: http://localhost:8000/api/v1/health
-- MinIO console: http://localhost:9001
-- MLflow: http://localhost:5000
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
-- Loki: http://localhost:3100
-- cAdvisor: http://localhost:8080
-- Flower: http://localhost:5555
-- RedisInsight: http://localhost:5540
-
-The backend is an API server, not the web frontend. Use the frontend URL for the application UI and the Swagger URL for API exploration.
-
-MLflow is accessed from the browser at `http://localhost:5000`. Backend and Celery containers must keep using `MLFLOW_TRACKING_URI=http://mlflow:5000`. If MLflow shows `Invalid Host header - possible DNS rebinding attack detected`, add the host/IP/domain to `MLFLOW_ALLOWED_HOSTS` in `.env` and restart MLflow:
-
-```bash
-docker compose up -d --build mlflow
-```
-
-Local demo hosts:
-
-```env
-MLFLOW_ALLOWED_HOSTS=localhost,localhost:*,127.0.0.1,127.0.0.1:*,mlflow,mlflow:*,0.0.0.0,0.0.0.0:*
-```
-
-For LAN or domain access, append values such as `192.168.1.10,192.168.1.10:*` or `mlflow.example.com,mlflow.example.com:*`. Do not use a global `*` wildcard in production unless you understand the DNS rebinding risk.
+| Service | URL |
+| --- | --- |
+| Frontend | http://localhost:5173 |
+| Backend root | http://localhost:8000 |
+| Swagger/OpenAPI | http://localhost:8000/docs |
+| Health | http://localhost:8000/health |
+| Metrics | http://localhost:8000/metrics |
+| MinIO console | http://localhost:9001 |
+| MLflow | http://localhost:5000 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 |
+| Loki | http://localhost:3100 |
+| Flower | http://localhost:5555 |
+| RedisInsight | http://localhost:5540 |
+| cAdvisor | http://localhost:8080 |
 
 Grafana demo login:
 
 - Username: `admin`
 - Password: `admin123`
 
-Prometheus query examples:
+Useful Docker commands:
+
+```powershell
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f celery_worker
+docker compose down
+```
+
+### Local
+
+For local development, run infrastructure services with Docker and run backend/frontend from the host.
+
+Start dependencies:
+
+```powershell
+docker compose up -d postgres redis minio mlflow prometheus grafana loki promtail redis_exporter postgres_exporter redisinsight flower cadvisor
+```
+
+Create and activate a Python virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r backend\requirements-dev.txt
+```
+
+Run database migrations and seed demo data:
+
+```powershell
+Set-Location backend
+alembic upgrade head
+python scripts\seed_demo_users.py
+python scripts\seed_demo_model.py
+Set-Location ..
+```
+
+Run the backend API:
+
+```powershell
+Set-Location backend
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+In another PowerShell terminal, run the Celery worker:
+
+```powershell
+Set-Location backend
+celery -A app.tasks.celery_app:celery_app worker --loglevel=info
+```
+
+In another PowerShell terminal, run the frontend:
+
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+```
+
+TODO: document a fully host-native setup for PostgreSQL, Redis, MinIO, and MLflow without Docker.
+
+## Testing
+
+Run backend tests:
+
+```powershell
+python -m pytest backend\tests -v
+```
+
+Run frontend tests and checks:
+
+```powershell
+npm --prefix frontend run test
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```
+
+Run smoke/final checks after the Docker stack is up:
+
+```powershell
+docker compose exec backend python scripts/celery_smoke_test.py
+docker compose exec backend python scripts/ml_smoke_test.py
+docker compose exec backend python scripts/mlops_smoke_test.py
+docker compose exec backend python scripts/retraining_smoke_test.py
+.\scripts\final_check.ps1
+```
+
+Check metrics:
+
+```powershell
+curl.exe http://localhost:8000/metrics
+```
+
+Useful Prometheus query examples:
 
 ```promql
 analyze_requests_total
@@ -184,196 +342,136 @@ up{job="redis-exporter"}
 up{job="postgres-exporter"}
 ```
 
-## Walkthrough Workflow
+## Model/Artifacts
 
-1. Open the frontend and log in as `doctor_demo`.
-2. Choose a local PNG/JPG chest X-ray image.
-3. Confirm the image preview, file name, size, and MIME type are shown.
-4. Click `Phân tích AI`.
-5. Watch status move through queued/processing/completed.
-6. Confirm four labels are displayed.
-7. Upload the same image again and verify the cache hit message: `Kết quả được lấy từ cache, không tạo job mới.`
-8. Log out and log in as `admin_demo`.
-9. Open model management, register a candidate model, then promote if better.
-10. Open review/MLOps, confirm or correct pending reviews.
-11. Open case history/detail, stored image, and HTML report export.
-12. Confirm the completed case result or correct the single true label before treating it as training-ready.
-13. Open retraining summary, export a manifest if labels have been confirmed/corrected, trigger retraining when the threshold is reached, and view monitoring/Grafana.
-13. Open Monitoring as Admin and use the infrastructure/log links for Prometheus, Grafana, Loki, Flower, RedisInsight, cAdvisor, MinIO, and MLflow.
+Local artifacts are intentionally ignored by Git. Keep only the README placeholders tracked.
 
-## Product UI Workflow
-
-Doctor/KTV users see the clinical workflow only:
-
-- `Dashboard`: personal case counts, recent cases, pending review shortcut.
-- `Phân tích ảnh`: upload and preview image, enter patient metadata, run AI analysis.
-- `Lịch sử ca chụp`: view owned cases, stored image, prediction results, and HTML report.
-- `Ca cần duyệt`: confirm or correct low-confidence labels before they become training-ready.
-- Completed case detail/result screens can also confirm or correct high-confidence AI results; raw predictions are not counted for retraining.
-
-Admin users see operational tools:
-
-- `Dashboard`: system totals, active model, pending reviews, training-ready counts.
-- `Quản lý người dùng`: create/update users and deactivate accounts instead of deleting them.
-- `Quản lý mô hình`: register candidate metadata, activate/promote models, archive inactive model metadata.
-- `Duyệt/gán nhãn lại`: review uncertain cases and manage retraining-ready labels.
-- `Tất cả ca chụp`: inspect cases and archive cases without deleting images or results.
-- `Monitoring`: backend, Redis, job/review metrics, Prometheus, Grafana, Loki, Flower, RedisInsight, and cAdvisor links.
-
-Label correction note: doctors/admins can update a confirmed or corrected label and note. The current schema stores the latest `confirmed_labels`, `reviewed_by`, `reviewed_at`, and note; full historical audit versions for every label edit are a future enhancement.
-
-Archive/deactivate behavior:
-
-- Archived cases are hidden from the main case list, but their database rows, images, jobs, and analysis results remain stored.
-- Inactive users cannot log in and existing tokens are rejected by authenticated endpoints.
-- Active models cannot be archived. Activate another model first, then archive inactive metadata if needed.
-
-## Testing Commands
-
-```bash
-python -m pytest backend/tests -v
-npm --prefix frontend run test
-npm --prefix frontend run build
-npm --prefix frontend run typecheck
-docker compose exec backend python scripts/celery_smoke_test.py
-curl http://localhost:8000/metrics
+```text
+artifacts/
++-- models/                 local model checkpoints
++-- sample_images/          local demo images
++-- training_seed/          seed images for retraining experiments
++-- evaluation_set/         fixed evaluation images
++-- retrained_models/       generated retrained checkpoints
++-- retraining_manifests/   generated training manifests
 ```
 
-Retraining confirmation and trigger checks:
+Expected local checkpoint:
 
-```bash
-# Replace TOKEN and CASE_ID with values from login/analyze or Swagger.
-curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/review-status
-curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/confirm-result
-curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/summary
-curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/start
+```text
+artifacts/models/best_model.pth
 ```
 
-Retraining threshold `N` is controlled by `RETRAIN_MIN_CONFIRMED_SAMPLES` in `.env`.
-`N` counts only new DB cases whose labels were confirmed or corrected by a
-doctor/admin. Local images under `artifacts/training_seed` help fine-tune the
-model but never satisfy the threshold by themselves.
-For pipeline testing you can set `N=1`, restart backend and Celery, confirm one case,
-then start fine-tuning manually or let the system create a job automatically when
-`RETRAIN_AUTO_START=true`:
+Docker mounts this path into backend and Celery containers as:
 
-```bash
-docker compose up -d --build backend celery_worker
-docker compose exec backend python scripts/retraining_smoke_test.py
-docker compose exec backend python scripts/retraining_smoke_test.py --start
-docker compose exec backend python scripts/inspect_training_data.py
+```text
+/app/artifacts/models/best_model.pth
 ```
 
-Test `N=2` and `N=5` similarly by setting `RETRAIN_MIN_CONFIRMED_SAMPLES=2`
-or `RETRAIN_MIN_CONFIRMED_SAMPLES=5`, restarting `backend` and `celery_worker`,
-then confirming/correcting at least that many completed cases. Tiny sample counts
-only test the pipeline and are not clinically meaningful.
-
-Local training seed data should be placed locally under:
+Class folder layout for `training_seed` and `evaluation_set`:
 
 ```text
 artifacts/training_seed/Atelectasis/
 artifacts/training_seed/Effusion/
 artifacts/training_seed/Infiltration/
 artifacts/training_seed/No_Finding/
-```
 
-Use the same class order as the MobileNetV3-Small model:
-`Atelectasis`, `Effusion`, `Infiltration`, `No_Finding`.
-`No Finding` is accepted as a folder alias, but `No_Finding` is canonical.
-Suggested counts:
-
-- Pipeline test: 5-10 images/class seed, 5 images/class eval.
-- Demo: 50-100 images/class seed, 20-50 images/class eval.
-- Stronger evaluation: 200+ images/class seed, 100+ images/class eval.
-
-Fixed evaluation data should be placed locally under:
-
-```text
 artifacts/evaluation_set/Atelectasis/
 artifacts/evaluation_set/Effusion/
 artifacts/evaluation_set/Infiltration/
 artifacts/evaluation_set/No_Finding/
 ```
 
-`EVALUATION_SET_DIR` points to `/app/artifacts/evaluation_set` in Docker. These
-images are ignored by Git. If the evaluation set is missing or empty, retraining
-falls back to a validation split only for pipeline testing and stores a warning in
-the retraining job. Fine-tuning logs params, metrics, manifest, checkpoint, class
-metadata, and `evaluation_source` to MLflow at http://localhost:5000. The retrained
-candidate is stored as inactive `ai_models` metadata; activate it only after Admin
-review using `promote-if-better` or the Admin Models page.
+Manual checkpoint validation and local inference:
 
-Promotion uses `MODEL_PROMOTION_METRIC=f1_score` and
-`MODEL_PROMOTION_MIN_DELTA=0.0` by default. `MODEL_AUTO_PROMOTE=false` keeps
-retrained models as inactive candidates until Admin explicitly promotes them.
-Evidently AI can be added later for data drift, prediction drift, and performance
-monitoring when ground truth becomes available. MLflow remains responsible for
-training runs and model registry, and Evidently does not replace fixed evaluation
-metrics or the promotion gate.
-
-Manual real-model local inference:
-
-```bash
-python backend/scripts/check_model_checkpoint.py --model-path artifacts/models/best_model.pth --architecture mobilenet_v3_small --task-type multi_class
-python backend/scripts/run_local_inference.py --image artifacts/sample_images/your_image.png --model-path artifacts/models/best_model.pth --architecture mobilenet_v3_small --task-type multi_class
+```powershell
+python backend\scripts\check_model_checkpoint.py --model-path artifacts\models\best_model.pth --architecture mobilenet_v3_small --task-type multi_class
+python backend\scripts\run_local_inference.py --image artifacts\sample_images\your_image.png --model-path artifacts\models\best_model.pth --architecture mobilenet_v3_small --task-type multi_class
 ```
 
-Register the local checkpoint to MLflow and create inactive `ai_models` metadata:
+Register the local checkpoint in MLflow and create inactive model metadata:
 
-```bash
+```powershell
 docker compose exec backend python scripts/register_best_model_to_mlflow.py
 ```
 
-The script logs params, the four approved metrics, `best_model.pth`, a small metadata JSON, and creates a Model Registry version under `chest-xray-mobilenetv3-small`. Pass real evaluation metrics when available:
+Register with explicit metrics:
 
-```bash
+```powershell
 docker compose exec backend python scripts/register_best_model_to_mlflow.py --accuracy 0.90 --precision-score 0.88 --recall-score 0.87 --f1-score 0.875
 ```
 
-Admin UI workflow:
+Retraining notes:
 
-1. Log in as Admin.
-2. Open `Quản lý mô hình`.
-3. Use `Đăng ký model lên MLflow` with `/app/artifacts/models/best_model.pth`.
-4. Open MLflow UI at http://localhost:5000 to inspect the run and registered model version.
-5. Promote or activate the resulting `ai_models` record only after reviewing metrics.
+- `RETRAIN_MIN_CONFIRMED_SAMPLES` controls the threshold for retraining.
+- Only doctor/admin confirmed or corrected DB cases count toward the threshold.
+- Raw AI predictions are not training-ready, even when confidence is high.
+- `training_seed` can support fine-tuning, but does not satisfy the threshold by itself.
+- `evaluation_set` is used for evaluation only, never training.
+- `MODEL_AUTO_PROMOTE=false` keeps retrained models inactive until Admin review.
 
-Windows PowerShell final check:
+## Notebooks
 
-```powershell
-.\scripts\final_check.ps1
+The repository currently includes:
+
+```text
+notebooks/train-model.ipynb
 ```
+
+Use notebooks for model experimentation/training only. Keep large datasets, generated checkpoints, and exported artifacts outside Git-tracked files.
+
+TODO: document the exact dataset source, preprocessing assumptions, and training reproduction steps for `notebooks/train-model.ipynb`.
 
 ## Troubleshooting
 
-- If login fails, run `docker compose exec backend python scripts/seed_demo_users.py`.
-- If analyze says no active model, run `docker compose exec backend python scripts/seed_demo_model.py`.
-- If image upload or worker download fails, check MinIO is running and `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and `MINIO_BUCKET` are configured.
-- If real-model inference fails, confirm `artifacts/models/best_model.pth` exists locally and Docker Compose mounted `./artifacts/models:/app/artifacts/models`.
-- If MLflow registration fails, confirm MLflow is running at http://localhost:5000 and Docker backend uses `MLFLOW_TRACKING_URI=http://mlflow:5000`.
-- If MLflow shows `Invalid Host header - possible DNS rebinding attack detected`, update `MLFLOW_ALLOWED_HOSTS` in `.env` with the browser host, then run `docker compose up -d --build mlflow`.
-- If jobs stay queued, open Flower at http://localhost:5555 and check `docker compose logs -f celery_worker`.
-- If Redis queue state is unclear, open RedisInsight at http://localhost:5540.
-- If Grafana is empty, log in with `admin` / `admin123`, open the `Medical Imaging Demo` folder, and confirm Prometheus can scrape `http://backend:8000/metrics` from Docker Compose.
-- If logs are missing in Grafana, check Loki at http://localhost:3100/ready and Promtail logs with `docker compose logs -f promtail`.
-- If Prometheus alerts or targets are missing, open http://localhost:9090/targets and confirm backend, cAdvisor, Redis exporter, PostgreSQL exporter, Loki, and Promtail are up.
-- If an older Grafana volume still uses a previous password, reset it with `docker compose exec grafana grafana cli admin reset-admin-password admin123`.
-- If the backend cannot connect to the database, run `docker compose ps` and verify PostgreSQL is healthy.
-- If frontend API calls fail, check `VITE_API_BASE_URL` and CORS origins.
-- If Docker ML dependency installation is slow, confirm the backend image uses CPU torch requirements.
+| Symptom | Check/Fix |
+| --- | --- |
+| Login fails | Run `docker compose exec backend python scripts/seed_demo_users.py`. |
+| API says there is no active model | Run `docker compose exec backend python scripts/seed_demo_model.py`. |
+| Jobs stay queued | Check `docker compose logs -f celery_worker` and open Flower at http://localhost:5555. |
+| Image upload/download fails | Verify MinIO is running and `.env` has matching `MINIO_*` values. |
+| Real-model inference fails | Confirm `artifacts/models/best_model.pth` exists and is mounted. |
+| MLflow host error | Add the browser host to `MLFLOW_ALLOWED_HOSTS`, then run `docker compose up -d --build mlflow`. |
+| Frontend cannot call API | Check `VITE_API_BASE_URL` and `BACKEND_CORS_ORIGINS`. |
+| Grafana is empty | Open http://localhost:9090/targets and verify scrape targets are up. |
+| Loki logs are missing | Check http://localhost:3100/ready and `docker compose logs -f promtail`. |
+| Database connection fails | Run `docker compose ps` and confirm PostgreSQL is healthy. |
+| Old Grafana password still applies | Run `docker compose exec grafana grafana cli admin reset-admin-password admin123`. |
 
-## Security And Limitations
+MLflow browser access:
 
-- Demo JWT auth is intentionally simple and not production-grade.
-- Demo credentials are for local development only.
-- Do not commit `.env`, real credentials, model weights, datasets, real patient data, MinIO/PostgreSQL/Redis volumes, or MLflow artifacts.
-- Do not commit `AGENTS.md`, `.agents/`, `.codex_tasks/`, or local Codex context files.
+```powershell
+docker compose up -d --build mlflow
+```
 
-## Known Limitations
+Suggested local development value:
 
-- The HTML report is browser-printable; PDF generation is not server-side yet.
-- DICOM is not supported yet.
-- The local MobileNetV3-Small checkpoint is a project model for demo/development and is not clinically certified.
-- Retraining only uses cases with stored confirmation evidence in `confirmed_labels`; raw AI predictions are excluded even when high-confidence.
-- Grafana includes demo dashboards and Loki log views; this is still a local development observability stack, not a production SRE setup.
+```env
+MLFLOW_ALLOWED_HOSTS=localhost,localhost:*,127.0.0.1,127.0.0.1:*,mlflow,mlflow:*,0.0.0.0,0.0.0.0:*
+```
+
+Do not use a global wildcard in production unless the DNS rebinding risk is understood and accepted.
+
+## Contributing
+
+1. Create a focused branch for the change.
+2. Keep changes scoped to the relevant backend, frontend, infra, docs, or artifact placeholder files.
+3. Add or update tests when behavior changes.
+4. Run the relevant checks before opening a PR:
+
+```powershell
+python -m pytest backend\tests -v
+npm --prefix frontend run test
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```
+
+5. Do not commit `.env`, real credentials, model weights, datasets, patient data, generated manifests, MLflow artifacts, database volumes, Redis data, or MinIO data.
+6. Update `docs/SYSTEM_DESIGN.md`, `docs/WORKFLOW.md`, or `docs/DEMO_GUIDE.md` when architecture or workflow changes.
+
+## Additional Documentation
+
+- [System Design](docs/SYSTEM_DESIGN.md)
+- [Workflow](docs/WORKFLOW.md)
+- [Demo Guide](docs/DEMO_GUIDE.md)
+- [Artifacts Guide](artifacts/README.md)

@@ -69,13 +69,14 @@ class RetrainingService:
         confirmed = count_reviews_by_status(self.db, status=REVIEW_STATUS_CONFIRMED)
         corrected = count_reviews_by_status(self.db, status=REVIEW_STATUS_CORRECTED)
         latest_completed_at = self._latest_completed_job_cutoff()
-        training_ready_items = self.get_training_ready_sample_items(
+        all_training_ready_items = self.get_training_ready_sample_items()
+        new_training_ready_items = self.get_training_ready_sample_items(
             reviewed_after=latest_completed_at,
         )
-        training_ready = len(training_ready_items)
-        finetune_summary = build_finetune_dataset(training_ready_items)
+        new_training_ready = len(new_training_ready_items)
+        finetune_summary = build_finetune_dataset(all_training_ready_items)
         min_samples = settings.retrain_min_confirmed_samples
-        missing_samples = max(min_samples - training_ready, 0)
+        missing_samples = max(min_samples - new_training_ready, 0)
         running_job = get_active_retraining_job(self.db)
         latest_job = get_latest_retraining_job(self.db)
         evaluation_status = get_evaluation_set_status()
@@ -84,7 +85,7 @@ class RetrainingService:
             "pending_reviews": pending,
             "confirmed_reviews": confirmed,
             "corrected_reviews": corrected,
-            "training_ready_cases": training_ready,
+            "training_ready_cases": new_training_ready,
             "training_seed_enabled": settings.retrain_include_training_seed,
             "training_seed_dir": settings.training_seed_dir,
             "training_seed_count": finetune_summary.seed_count,
@@ -92,7 +93,7 @@ class RetrainingService:
             "finetune_per_class_count": finetune_summary.per_class_count,
             "missing_confirmed_samples": missing_samples,
             "should_trigger_retraining": (
-                training_ready >= min_samples
+                new_training_ready >= min_samples
                 and running_job is None
             ),
             "retrain_auto_start": settings.retrain_auto_start,
@@ -232,9 +233,7 @@ class RetrainingService:
         return job
 
     def export_manifest_for_job(self, job: RetrainingJob | None = None) -> dict[str, object]:
-        sample_items = self.get_training_ready_sample_items(
-            reviewed_after=self._latest_completed_job_cutoff(before_job=job),
-        )
+        sample_items = self.get_training_ready_sample_items()
         finetune_summary = build_finetune_dataset(sample_items)
         samples = [sample.to_manifest() for sample in finetune_summary.samples]
 
