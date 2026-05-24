@@ -14,6 +14,7 @@ export function StatusBadge({ value }: StatusBadgeProps) {
     normalized === "ok" ||
     normalized === "clear" ||
     normalized === "positive" ||
+    normalized === "mlops_ready" ||
     normalized === "true" ||
     normalized === "confirmed" ||
     normalized === "corrected" ||
@@ -27,8 +28,10 @@ export function StatusBadge({ value }: StatusBadgeProps) {
           normalized === "inactive"
         ? "negative"
         : normalized === "pending" ||
-            normalized === "queued" ||
+          normalized === "queued" ||
             normalized === "processing" ||
+            normalized === "mlops_loading" ||
+            normalized === "mlops_not_ready" ||
             normalized === "draft" ||
             normalized === "archived"
           ? "warning"

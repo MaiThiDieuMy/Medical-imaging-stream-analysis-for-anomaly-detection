@@ -33,6 +33,8 @@ const reviewLabels = ["Atelectasis", "Effusion", "Infiltration", "No Finding"];
 
 type CorrectionState = Record<string, string>;
 type NoteState = Record<string, string>;
+type AdminMlopsSection = "summary" | "jobs" | "pendingReviews" | "reviewedReviews";
+type AdminMlopsSectionErrors = Partial<Record<AdminMlopsSection, string>>;
 
 type ReviewMlopsPageProps = {
   isAdmin: boolean;
@@ -40,6 +42,39 @@ type ReviewMlopsPageProps = {
 
 export function ReviewMlopsPage({ isAdmin }: ReviewMlopsPageProps) {
   return isAdmin ? <AdminReviewMlopsPage /> : <DoctorReviewPage />;
+}
+
+export function getAdminRetrainingBadgeValue(
+  isInitialLoading: boolean,
+  summary: Pick<RetrainingSummary, "should_trigger_retraining"> | null,
+): string {
+  if (isInitialLoading) {
+    return "mlops_loading";
+  }
+  if (!summary) {
+    return "mlops_unavailable";
+  }
+  return summary.should_trigger_retraining ? "mlops_ready" : "mlops_not_ready";
+}
+
+export function getAdminSummaryFallbackText(
+  isInitialLoading: boolean,
+  summary: RetrainingSummary | null,
+): string | null {
+  if (isInitialLoading) {
+    return "Đang tải điều kiện fine-tune...";
+  }
+  if (!summary) {
+    return "Không lấy được thông tin điều kiện fine-tune. Vui lòng thử tải lại.";
+  }
+  return null;
+}
+
+export function shouldShowAdminEmptyState(
+  isInitialLoading: boolean,
+  itemCount: number,
+): boolean {
+  return !isInitialLoading && itemCount === 0;
 }
 
 function DoctorReviewPage() {
@@ -383,35 +418,93 @@ function ReviewQueue({
 }
 
 function AdminReviewMlopsPage() {
-  const [reviews, setReviews] = useState<CaseReview[]>([]);
+  const [pendingReviews, setPendingReviews] = useState<CaseReview[]>([]);
+  const [reviewedReviews, setReviewedReviews] = useState<CaseReview[]>([]);
   const [summary, setSummary] = useState<RetrainingSummary | null>(null);
   const [jobs, setJobs] = useState<RetrainingJob[]>([]);
   const [corrections, setCorrections] = useState<CorrectionState>({});
+  const [sectionErrors, setSectionErrors] = useState<AdminMlopsSectionErrors>({});
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [forceStart, setForceStart] = useState(false);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reviews = pendingReviews;
+  const summaryFallbackText = getAdminSummaryFallbackText(isInitialLoading, summary);
 
-  async function refreshData() {
-    const pending = await listPendingReviews();
-    const retrainingSummary = await getRetrainingSummary();
-    const retrainingJobs = await listRetrainingJobs();
-    setReviews(pending);
-    setSummary(retrainingSummary);
-    setJobs(retrainingJobs);
-    setCorrections((current) => {
-      const next = { ...current };
-      for (const review of pending) {
-        if (!next[review.review_id]) {
-          next[review.review_id] = initialSelectedLabel(review);
+  async function refreshData({ initial = false }: { initial?: boolean } = {}) {
+    if (initial) {
+      setIsInitialLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+    setError(null);
+
+    const [pendingResult, reviewsResult, summaryResult, jobsResult] =
+      await Promise.allSettled([
+        listPendingReviews(),
+        listReviews(),
+        getRetrainingSummary(),
+        listRetrainingJobs(),
+      ]);
+
+    const nextErrors: AdminMlopsSectionErrors = {};
+    if (pendingResult.status === "fulfilled") {
+      const pending = pendingResult.value;
+      setPendingReviews(pending);
+      setCorrections((current) => {
+        const next = { ...current };
+        for (const review of pending) {
+          if (!next[review.review_id]) {
+            next[review.review_id] = initialSelectedLabel(review);
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      });
+    } else {
+      nextErrors.pendingReviews = errorMessage(
+        pendingResult.reason,
+        "Không tải được ca cần duyệt.",
+      );
+    }
+
+    if (reviewsResult.status === "fulfilled") {
+      setReviewedReviews(
+        reviewsResult.value.filter((review) => review.status !== "pending"),
+      );
+    } else {
+      nextErrors.reviewedReviews = errorMessage(
+        reviewsResult.reason,
+        "Không tải được ca đã duyệt.",
+      );
+    }
+
+    if (summaryResult.status === "fulfilled") {
+      setSummary(summaryResult.value);
+    } else {
+      nextErrors.summary = errorMessage(
+        summaryResult.reason,
+        "Không lấy được thông tin điều kiện fine-tune.",
+      );
+    }
+
+    if (jobsResult.status === "fulfilled") {
+      setJobs(jobsResult.value);
+    } else {
+      nextErrors.jobs = errorMessage(
+        jobsResult.reason,
+        "Không tải được danh sách job fine-tune.",
+      );
+    }
+
+    setSectionErrors(nextErrors);
+    setIsInitialLoading(false);
+    setIsRefreshing(false);
   }
 
   useEffect(() => {
-    refreshData().catch((exc) =>
+    refreshData({ initial: true }).catch((exc) =>
       setError(exc instanceof Error ? exc.message : "Không tải được danh sách cần duyệt."),
     );
   }, []);
@@ -515,11 +608,12 @@ function AdminReviewMlopsPage() {
           <h2>Duyệt ca và MLOps</h2>
           <p>Quản trị viên theo dõi review, điều kiện fine-tune và model ứng viên.</p>
         </div>
-        <StatusBadge value={summary?.should_trigger_retraining ?? false} />
+        <StatusBadge value={getAdminRetrainingBadgeValue(isInitialLoading, summary)} />
       </div>
 
       {error && <Message tone="error">{error}</Message>}
       {message && <Message tone="success">{message}</Message>}
+      {isRefreshing && <Message tone="info">Đang cập nhật dữ liệu...</Message>}
 
       <div className="panel">
         <div className="section-heading">
@@ -531,15 +625,26 @@ function AdminReviewMlopsPage() {
             </p>
           </div>
           <div className="actions">
+            <button
+              disabled={isInitialLoading || isRefreshing}
+              onClick={() => void refreshData()}
+              type="button"
+            >
+              {isRefreshing ? "Đang cập nhật..." : "Tải lại"}
+            </button>
             <button onClick={() => void handleRetrainingCheck()} type="button">
               Kiểm tra điều kiện
             </button>
-            <button onClick={() => void handleExportManifest()} type="button">
+            <button
+              disabled={isInitialLoading || !summary}
+              onClick={() => void handleExportManifest()}
+              type="button"
+            >
               Xuất manifest
             </button>
             <button
               className="primary"
-              disabled={!summary?.should_trigger_retraining}
+              disabled={isInitialLoading || !summary?.should_trigger_retraining}
               onClick={() => void handleTriggerRetraining()}
               type="button"
             >
@@ -547,7 +652,9 @@ function AdminReviewMlopsPage() {
             </button>
           </div>
         </div>
-        {summary ? (
+        {isInitialLoading ? (
+          <SummarySkeleton />
+        ) : summary ? (
           <div className="summary-grid">
             <SummaryItem
               label="Ngưỡng tối thiểu N ca"
@@ -585,7 +692,9 @@ function AdminReviewMlopsPage() {
             />
           </div>
         ) : (
-          <p className="muted">Chưa có summary.</p>
+          <Message tone="error">
+            {sectionErrors.summary ?? summaryFallbackText}
+          </Message>
         )}
         {summary && summary.missing_confirmed_samples > 0 && (
           <Message tone="info">
@@ -635,9 +744,18 @@ function AdminReviewMlopsPage() {
         </div>
       </div>
 
-      {jobs.length > 0 && (
-        <div className="panel">
+      <div className="panel">
           <h3>Fine-tune jobs gần đây</h3>
+          {isInitialLoading ? (
+            <JobsSkeleton />
+          ) : sectionErrors.jobs ? (
+            <Message tone="error">{sectionErrors.jobs}</Message>
+          ) : jobs.length === 0 ? (
+            <div className="empty-state compact">
+              <strong>Chưa có job fine-tune nào.</strong>
+              <p>Job sẽ xuất hiện sau khi quản trị viên bắt đầu fine-tune.</p>
+            </div>
+          ) : (
           <div className="table-wrap">
             <table>
               <thead>
@@ -701,11 +819,23 @@ function AdminReviewMlopsPage() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+          )}
+      </div>
 
       <div className="review-list">
-        {reviews.length === 0 ? (
+        {isInitialLoading ? (
+          <div className="panel">
+            <div className="section-heading">
+              <h3>Ca cần duyệt</h3>
+              <span className="count-pill">Đang tải</span>
+            </div>
+            <ReviewSkeleton />
+          </div>
+        ) : sectionErrors.pendingReviews ? (
+          <div className="panel">
+            <Message tone="error">{sectionErrors.pendingReviews}</Message>
+          </div>
+        ) : reviews.length === 0 ? (
           <div className="panel empty-state">
             <strong>Không có ca cần duyệt</strong>
             <p>Tất cả ca hiện tại đã được xử lý hoặc chưa có ca nào cần xác nhận.</p>
@@ -757,8 +887,85 @@ function AdminReviewMlopsPage() {
           ))
         )}
       </div>
+
+      {!isInitialLoading && reviewedReviews.length > 0 && (
+        <div className="panel empty-state compact">
+          <strong>Đã duyệt gần đây</strong>
+          <p>
+            {reviewedReviews.length} ca đã có xác nhận hoặc gán nhãn lại và không
+            còn nằm trong danh sách chờ duyệt.
+          </p>
+        </div>
+      )}
     </section>
   );
+}
+
+function SummarySkeleton() {
+  return (
+    <div className="summary-grid" aria-label="Đang tải điều kiện fine-tune">
+      {Array.from({ length: 8 }, (_, index) => (
+        <div className="summary-item skeleton-card" key={index}>
+          <span className="skeleton-line short" />
+          <strong className="skeleton-line" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function JobsSkeleton() {
+  return (
+    <div className="table-wrap loading-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Trạng thái</th>
+            <th>Mẫu</th>
+            <th>Bắt đầu</th>
+            <th>Kết thúc</th>
+            <th>F1</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: 3 }, (_, index) => (
+            <tr key={index}>
+              {Array.from({ length: 6 }, (_cell, cellIndex) => (
+                <td key={cellIndex}>
+                  <span className="skeleton-line" />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReviewSkeleton() {
+  return (
+    <div className="review-loading">
+      <p className="muted">Đang tải ca cần duyệt...</p>
+      {Array.from({ length: 2 }, (_, index) => (
+        <div className="review-list-item skeleton-card" key={index}>
+          <div className="review-item-main">
+            <span className="skeleton-line short" />
+            <span className="skeleton-line" />
+          </div>
+          <div className="review-item-side">
+            <span className="skeleton-pill" />
+            <span className="skeleton-line tiny" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function initialSelectedLabel(review: CaseReview): string {
