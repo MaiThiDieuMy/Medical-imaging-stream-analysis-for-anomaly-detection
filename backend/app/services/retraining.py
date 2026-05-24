@@ -15,6 +15,7 @@ from app.crud.retraining_jobs import (
     get_active_retraining_job,
     get_latest_retraining_job,
     get_retraining_job,
+    list_completed_retraining_jobs,
     list_retraining_jobs,
 )
 from app.crud.reviews import count_reviews_by_status, list_training_ready_reviews
@@ -67,17 +68,16 @@ class RetrainingService:
         pending = count_reviews_by_status(self.db, status="pending")
         confirmed = count_reviews_by_status(self.db, status=REVIEW_STATUS_CONFIRMED)
         corrected = count_reviews_by_status(self.db, status=REVIEW_STATUS_CORRECTED)
-        training_ready_items = self.get_training_ready_sample_items()
+        latest_completed_at = self._latest_completed_job_cutoff()
+        training_ready_items = self.get_training_ready_sample_items(
+            reviewed_after=latest_completed_at,
+        )
         training_ready = len(training_ready_items)
         finetune_summary = build_finetune_dataset(training_ready_items)
         min_samples = settings.retrain_min_confirmed_samples
         missing_samples = max(min_samples - training_ready, 0)
         running_job = get_active_retraining_job(self.db)
         latest_job = get_latest_retraining_job(self.db)
-        has_current_job = self._job_already_covers_sample_count(
-            latest_job,
-            sample_count=training_ready,
-        )
         evaluation_status = get_evaluation_set_status()
         return {
             "min_confirmed_samples": min_samples,
@@ -94,7 +94,6 @@ class RetrainingService:
             "should_trigger_retraining": (
                 training_ready >= min_samples
                 and running_job is None
-                and not has_current_job
             ),
             "retrain_auto_start": settings.retrain_auto_start,
             "evaluation_set_available": evaluation_status.available,
@@ -105,7 +104,11 @@ class RetrainingService:
             "latest_job": latest_job,
         }
 
-    def get_training_ready_samples(self) -> list[CaseReview]:
+    def get_training_ready_samples(
+        self,
+        *,
+        reviewed_after: datetime | None = None,
+    ) -> list[CaseReview]:
         reviews = list_training_ready_reviews(self.db)
         ready: list[CaseReview] = []
         seen_cases: set[uuid.UUID] = set()
@@ -113,13 +116,21 @@ class RetrainingService:
             if review.case_id in seen_cases:
                 continue
             if self._is_training_ready_review(review):
+                if reviewed_after is not None:
+                    reviewed_at = review.reviewed_at or review.created_at
+                    if reviewed_at <= reviewed_after:
+                        continue
                 ready.append(review)
                 seen_cases.add(review.case_id)
         return ready
 
-    def get_training_ready_sample_items(self) -> list[TrainingReadySampleInfo]:
+    def get_training_ready_sample_items(
+        self,
+        *,
+        reviewed_after: datetime | None = None,
+    ) -> list[TrainingReadySampleInfo]:
         items: list[TrainingReadySampleInfo] = []
-        for review in self.get_training_ready_samples():
+        for review in self.get_training_ready_samples(reviewed_after=reviewed_after):
             item = self._training_ready_sample_item(review)
             if item is not None:
                 items.append(item)
@@ -137,7 +148,10 @@ class RetrainingService:
         triggered_by: uuid.UUID | None = None,
         trigger_type: str | None = None,
     ) -> RetrainingJob:
-        samples = self.get_training_ready_sample_items()
+        latest_completed_at = None if force else self._latest_completed_job_cutoff()
+        samples = self.get_training_ready_sample_items(
+            reviewed_after=latest_completed_at,
+        )
         finetune_summary = build_finetune_dataset(samples)
         required_samples = min_samples or settings.retrain_min_confirmed_samples
         if not samples and finetune_summary.total_train_count <= 0:
@@ -155,16 +169,6 @@ class RetrainingService:
         if existing_job is not None:
             raise RetrainingServiceError(
                 "A retraining job is already queued or running.",
-                status_code=409,
-            )
-
-        latest_job = get_latest_retraining_job(self.db)
-        if not force and self._job_already_covers_sample_count(
-            latest_job,
-            sample_count=len(samples),
-        ):
-            raise RetrainingServiceError(
-                "A retraining job already covers the current training-ready sample count.",
                 status_code=409,
             )
 
@@ -197,16 +201,15 @@ class RetrainingService:
         if not settings.retrain_auto_start:
             return None
 
-        samples = self.get_training_ready_sample_items()
+        latest_completed_at = self._latest_completed_job_cutoff()
+        samples = self.get_training_ready_sample_items(
+            reviewed_after=latest_completed_at,
+        )
         required_samples = settings.retrain_min_confirmed_samples
         if len(samples) < required_samples:
             return None
 
         if get_active_retraining_job(self.db) is not None:
-            return None
-
-        latest_job = get_latest_retraining_job(self.db)
-        if self._job_already_covers_sample_count(latest_job, sample_count=len(samples)):
             return None
 
         job = self.create_retraining_job(
@@ -229,7 +232,9 @@ class RetrainingService:
         return job
 
     def export_manifest_for_job(self, job: RetrainingJob | None = None) -> dict[str, object]:
-        sample_items = self.get_training_ready_sample_items()
+        sample_items = self.get_training_ready_sample_items(
+            reviewed_after=self._latest_completed_job_cutoff(before_job=job),
+        )
         finetune_summary = build_finetune_dataset(sample_items)
         samples = [sample.to_manifest() for sample in finetune_summary.samples]
 
@@ -425,3 +430,15 @@ class RetrainingService:
             }
             and job.training_samples_count >= sample_count
         )
+
+    def _latest_completed_job_cutoff(
+        self,
+        *,
+        before_job: RetrainingJob | None = None,
+    ) -> datetime | None:
+        for job in list_completed_retraining_jobs(self.db):
+            completed_at = job.finished_at or job.created_at
+            if before_job is not None and completed_at >= before_job.created_at:
+                continue
+            return completed_at
+        return None

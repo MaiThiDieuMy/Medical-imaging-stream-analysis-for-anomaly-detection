@@ -20,6 +20,15 @@ class PatientSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PatientUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=1, max_length=100)
+    gender: str | None = Field(default=None, min_length=1, max_length=10)
+    birth_year: int | None = Field(default=None, ge=1900, le=2100)
+    department: str | None = Field(default=None, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class XRayImageSummary(BaseModel):
     image_id: UUID
     file_name: str

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   activateModel,
+  deleteRetrainedModel,
   getActiveModel,
   listMlflowModels,
   listModels,
@@ -31,6 +32,7 @@ export function AdminModelsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const visibleModels = models.filter((model) => !model.archived_at);
 
   async function refreshModels() {
     const [modelList, active, registry] = await Promise.all([
@@ -117,6 +119,37 @@ export function AdminModelsPage() {
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không chọn được mô hình.");
     }
+  }
+
+  async function handleDelete(model: AIModel) {
+    if (
+      !window.confirm(
+        `Xóa file weights local của model ${model.model_name}:${model.version}? MLflow history sẽ được giữ nguyên.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    setPromotion(null);
+    setMlflowRegistration(null);
+    try {
+      await deleteRetrainedModel(model.model_id);
+      setMessage(
+        "Đã xóa weights local và cập nhật record model. MLflow history được giữ nguyên.",
+      );
+      await refreshModels();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Không xóa được model.");
+    }
+  }
+
+  function isBaselineModel(model: AIModel): boolean {
+    return (
+      model.model_name === "kaggle-mobilenetv3-small-chest-xray" ||
+      model.version === "kaggle-v1" ||
+      model.model_path === "artifacts/models/best_model.pth"
+    );
   }
 
   return (
@@ -318,7 +351,7 @@ export function AdminModelsPage() {
               Kích hoạt hoặc chọn model tốt hơn chỉ ảnh hưởng các inference mới.
             </p>
           </div>
-          <span className="count-pill">{models.length} model</span>
+          <span className="count-pill">{visibleModels.length} model</span>
         </div>
         <div className="table-wrap">
           <table>
@@ -333,7 +366,7 @@ export function AdminModelsPage() {
               </tr>
             </thead>
             <tbody>
-              {models.map((model) => (
+              {visibleModels.map((model) => (
                 <tr key={model.model_id}>
                   <td>
                     <span>{model.model_name}</span>
@@ -383,10 +416,22 @@ export function AdminModelsPage() {
                     >
                       Chọn nếu tốt hơn
                     </button>
+                    <button
+                      className="danger"
+                      disabled={
+                        model.is_active ||
+                        Boolean(model.archived_at) ||
+                        isBaselineModel(model)
+                      }
+                      onClick={() => void handleDelete(model)}
+                      type="button"
+                    >
+                      Xóa weights
+                    </button>
                   </td>
                 </tr>
               ))}
-              {models.length === 0 && (
+              {visibleModels.length === 0 && (
                 <tr>
                   <td colSpan={6}>Chưa có metadata model.</td>
                 </tr>

@@ -63,3 +63,13 @@ def get_latest_retraining_job(db: Session) -> RetrainingJob | None:
     return db.execute(
         select(RetrainingJob).order_by(RetrainingJob.created_at.desc())
     ).scalars().first()
+
+
+def list_completed_retraining_jobs(db: Session) -> list[RetrainingJob]:
+    return list(
+        db.execute(
+            select(RetrainingJob)
+            .where(RetrainingJob.status == "completed")
+            .order_by(RetrainingJob.finished_at.desc(), RetrainingJob.created_at.desc())
+        ).scalars()
+    )

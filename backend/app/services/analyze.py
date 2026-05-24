@@ -13,12 +13,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.crud.ai_models import get_active_model
 from app.crud.analysis import (
+    create_patient_for_analysis,
     create_queued_analysis,
     get_cached_case_with_results,
     get_case_with_job,
     get_case_with_results,
     get_job_with_model,
-    get_or_update_patient,
 )
 from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import AnalysisResult
@@ -118,18 +118,25 @@ class AnalyzeService:
                 results=self._result_items(cached_results),
             )
 
-        patient = get_or_update_patient(
-            self.db,
-            patient_code=patient_data.patient_code.strip(),
-            full_name=patient_data.full_name.strip(),
-            gender=patient_data.gender.strip(),
-            birth_year=patient_data.birth_year,
-            department=(
-                patient_data.department.strip()
-                if patient_data.department is not None
-                else None
-            ),
-        )
+        try:
+            patient = create_patient_for_analysis(
+                self.db,
+                patient_code=(
+                    patient_data.patient_code.strip()
+                    if patient_data.patient_code
+                    else None
+                ),
+                full_name=patient_data.full_name.strip(),
+                gender=patient_data.gender.strip(),
+                birth_year=patient_data.birth_year,
+                department=(
+                    patient_data.department.strip()
+                    if patient_data.department is not None
+                    else None
+                ),
+            )
+        except ValueError as exc:
+            raise AnalyzeServiceError(str(exc), status_code=409) from exc
         image_path = self.storage.save_image_bytes(
             image.content,
             image_hash=image_hash,

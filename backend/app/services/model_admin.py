@@ -3,12 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 import uuid
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.crud.ai_models import (
+    DEMO_MODEL_NAME,
+    DEMO_MODEL_PATH,
+    DEMO_MODEL_VERSION,
     activate_model,
     create_model,
     get_active_model,
@@ -382,6 +386,33 @@ class ModelAdminService:
             )
         return model
 
+    def delete_retrained_model(self, model_id: uuid.UUID) -> AIModel:
+        model = self.get_model(model_id)
+        if model.is_active:
+            raise ModelAdminServiceError(
+                "Active AIModel cannot be deleted. Activate another model first.",
+                status_code=409,
+            )
+        if self._is_baseline_model(model):
+            raise ModelAdminServiceError(
+                "Baseline AIModel cannot be deleted.",
+                status_code=409,
+            )
+
+        original_path = model.model_path
+        self._delete_local_weights(original_path)
+        if model.archived_at is None:
+            model.archived_at = datetime.now(timezone.utc)
+        model.model_path = f"deleted://local-weights/{model.model_id}"
+        self.db.commit()
+        self.db.refresh(model)
+        logger.info(
+            "Deleted retrained AI model weights: model_id=%s original_path=%s",
+            model.model_id,
+            original_path,
+        )
+        return model
+
     def _ensure_unique_model_version(self, model_name: str, version: str) -> None:
         existing = get_model_by_name_version(
             self.db,
@@ -470,3 +501,31 @@ class ModelAdminService:
             return None
         value = getattr(model, metric_name, None)
         return float(value) if value is not None else None
+
+    @staticmethod
+    def _is_baseline_model(model: AIModel) -> bool:
+        return (
+            model.model_name == DEMO_MODEL_NAME
+            or model.version == DEMO_MODEL_VERSION
+            or model.model_path == DEMO_MODEL_PATH
+            or (
+                bool(settings.model_weights_path)
+                and model.model_path == settings.model_weights_path
+            )
+        )
+
+    @staticmethod
+    def _delete_local_weights(model_path: str) -> None:
+        if "://" in model_path:
+            return
+        path = Path(model_path)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as exc:
+            raise ModelAdminServiceError(
+                f"Could not delete local model weights: {exc}",
+                status_code=500,
+            ) from exc

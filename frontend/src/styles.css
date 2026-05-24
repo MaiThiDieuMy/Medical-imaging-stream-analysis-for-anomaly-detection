@@ -1099,6 +1099,28 @@ td small {
   background: #fbfdff;
 }
 
+.compact-heading {
+  margin-bottom: 10px;
+}
+
+.compact-heading button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.patient-edit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.patient-edit-form label {
+  display: grid;
+  gap: 6px;
+  color: #314355;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .case-detail-grid code {
   display: block;
   margin-bottom: 8px;

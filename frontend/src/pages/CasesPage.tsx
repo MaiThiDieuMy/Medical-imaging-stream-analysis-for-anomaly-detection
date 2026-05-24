@@ -5,6 +5,7 @@ import {
   getCaseReportHtml,
   listCases,
   listMyCases,
+  updatePatient,
 } from "../api/client";
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
@@ -13,6 +14,7 @@ import { TrainingConfirmationPanel } from "../components/TrainingConfirmationPan
 import type {
   CaseDetailResponse,
   CaseListItem,
+  PatientUpdatePayload,
   UserRole,
 } from "../types/api";
 import {
@@ -103,6 +105,11 @@ export function CasesPage({ role, initialCaseId, onOpenReviews }: CasesPageProps
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không tải được chi tiết ca.");
     }
+  }
+
+  async function refreshSelectedCase(caseId: string) {
+    await selectCase(caseId);
+    await refreshCases(caseId);
   }
 
   async function openReport(caseId: string) {
@@ -295,6 +302,7 @@ export function CasesPage({ role, initialCaseId, onOpenReviews }: CasesPageProps
           onCopyCaseId={copyCaseId}
           onOpenReport={openReport}
           onOpenReviews={onOpenReviews}
+          onPatientUpdated={refreshSelectedCase}
           onRefreshCase={selectCase}
           selectedCase={selectedCase}
         />
@@ -309,6 +317,7 @@ function CaseDetailPanel({
   onCopyCaseId,
   onOpenReport,
   onOpenReviews,
+  onPatientUpdated,
   onRefreshCase,
   selectedCase,
 }: {
@@ -317,9 +326,36 @@ function CaseDetailPanel({
   onCopyCaseId: (caseId: string) => void;
   onOpenReport: (caseId: string) => Promise<void>;
   onOpenReviews?: () => void;
+  onPatientUpdated: (caseId: string) => Promise<void>;
   onRefreshCase: (caseId: string) => Promise<void>;
   selectedCase: CaseDetailResponse | null;
 }) {
+  const [isEditingPatient, setIsEditingPatient] = useState(false);
+  const [patientForm, setPatientForm] = useState({
+    full_name: "",
+    gender: "",
+    birth_year: "",
+    department: "",
+  });
+  const [patientMessage, setPatientMessage] = useState<string | null>(null);
+  const [patientError, setPatientError] = useState<string | null>(null);
+  const [patientSaving, setPatientSaving] = useState(false);
+
+  useEffect(() => {
+    if (!selectedCase) {
+      return;
+    }
+    setPatientForm({
+      full_name: selectedCase.patient.full_name,
+      gender: selectedCase.patient.gender,
+      birth_year: selectedCase.patient.birth_year?.toString() ?? "",
+      department: selectedCase.patient.department ?? "",
+    });
+    setPatientMessage(null);
+    setPatientError(null);
+    setIsEditingPatient(false);
+  }, [selectedCase?.case_id, selectedCase?.patient.patient_id]);
+
   if (!selectedCase) {
     return (
       <div className="panel case-detail-panel">
@@ -332,6 +368,39 @@ function CaseDetailPanel({
   }
 
   const predicted = selectedCase.results.find((result) => result.predicted_positive);
+
+  async function savePatient() {
+    if (!selectedCase) {
+      return;
+    }
+    setPatientError(null);
+    setPatientMessage(null);
+    if (!patientForm.full_name.trim() || !patientForm.gender.trim()) {
+      setPatientError("Vui lòng nhập họ tên và giới tính.");
+      return;
+    }
+    const payload: PatientUpdatePayload = {
+      full_name: patientForm.full_name.trim(),
+      gender: patientForm.gender.trim(),
+      birth_year: patientForm.birth_year.trim()
+        ? Number(patientForm.birth_year)
+        : null,
+      department: patientForm.department.trim() || null,
+    };
+    try {
+      setPatientSaving(true);
+      await updatePatient(selectedCase.patient.patient_id, payload);
+      await onPatientUpdated(selectedCase.case_id);
+      setPatientMessage("Đã cập nhật thông tin bệnh nhân.");
+      setIsEditingPatient(false);
+    } catch (exc) {
+      setPatientError(
+        exc instanceof Error ? exc.message : "Không cập nhật được bệnh nhân.",
+      );
+    } finally {
+      setPatientSaving(false);
+    }
+  }
 
   return (
     <div className="panel case-detail-panel">
@@ -360,29 +429,94 @@ function CaseDetailPanel({
 
       <div className="case-detail-grid">
         <section>
-          <h4>Thông tin bệnh nhân</h4>
-          <dl className="detail-list compact">
-            <div>
-              <dt>Mã bệnh nhân</dt>
-              <dd>{selectedCase.patient.patient_code}</dd>
+          <div className="section-heading compact-heading">
+            <h4>Thong tin benh nhan</h4>
+            <button onClick={() => setIsEditingPatient((value) => !value)} type="button">
+              {isEditingPatient ? "Huy" : "Sua"}
+            </button>
+          </div>
+          {patientError && <Message tone="error">{patientError}</Message>}
+          {patientMessage && <Message tone="success">{patientMessage}</Message>}
+          {isEditingPatient ? (
+            <div className="patient-edit-form">
+              <label>
+                Ma benh nhan
+                <input disabled value={selectedCase.patient.patient_code} />
+              </label>
+              <label>
+                Ho ten
+                <input
+                  onChange={(event) =>
+                    setPatientForm({ ...patientForm, full_name: event.target.value })
+                  }
+                  required
+                  value={patientForm.full_name}
+                />
+              </label>
+              <label>
+                Gioi tinh
+                <input
+                  onChange={(event) =>
+                    setPatientForm({ ...patientForm, gender: event.target.value })
+                  }
+                  required
+                  value={patientForm.gender}
+                />
+              </label>
+              <label>
+                Nam sinh
+                <input
+                  max="2100"
+                  min="1900"
+                  onChange={(event) =>
+                    setPatientForm({ ...patientForm, birth_year: event.target.value })
+                  }
+                  type="number"
+                  value={patientForm.birth_year}
+                />
+              </label>
+              <label>
+                Khoa/phong
+                <input
+                  onChange={(event) =>
+                    setPatientForm({ ...patientForm, department: event.target.value })
+                  }
+                  value={patientForm.department}
+                />
+              </label>
+              <button
+                className="primary"
+                disabled={patientSaving}
+                onClick={() => void savePatient()}
+                type="button"
+              >
+                {patientSaving ? "Dang luu..." : "Luu thay doi"}
+              </button>
             </div>
-            <div>
-              <dt>Họ tên</dt>
-              <dd>{selectedCase.patient.full_name}</dd>
-            </div>
-            <div>
-              <dt>Giới tính</dt>
-              <dd>{selectedCase.patient.gender}</dd>
-            </div>
-            <div>
-              <dt>Năm sinh</dt>
-              <dd>{selectedCase.patient.birth_year ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Khoa/phòng</dt>
-              <dd>{selectedCase.patient.department ?? "-"}</dd>
-            </div>
-          </dl>
+          ) : (
+            <dl className="detail-list compact">
+              <div>
+                <dt>Ma benh nhan</dt>
+                <dd>{selectedCase.patient.patient_code}</dd>
+              </div>
+              <div>
+                <dt>Ho ten</dt>
+                <dd>{selectedCase.patient.full_name}</dd>
+              </div>
+              <div>
+                <dt>Gioi tinh</dt>
+                <dd>{selectedCase.patient.gender}</dd>
+              </div>
+              <div>
+                <dt>Nam sinh</dt>
+                <dd>{selectedCase.patient.birth_year ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Khoa/phong</dt>
+                <dd>{selectedCase.patient.department ?? "-"}</dd>
+              </div>
+            </dl>
+          )}
         </section>
 
         <section>

@@ -4,7 +4,6 @@ import {
   getCaseReportHtml,
   getCaseResults,
   getJobStatus,
-  listMyCases,
 } from "../api/client";
 import { Message } from "../components/Message";
 import { ResultTable } from "../components/ResultTable";
@@ -13,14 +12,12 @@ import { TrainingConfirmationPanel } from "../components/TrainingConfirmationPan
 import type {
   AnalyzeFormValues,
   AnalyzeResponse,
-  CaseListItem,
   CaseResultsResponse,
   JobStatusResponse,
 } from "../types/api";
 import { compactId, formatCacheStatus, formatProcessingStatus } from "../utils/format";
 
 const initialValues: AnalyzeFormValues = {
-  patient_code: "",
   full_name: "",
   gender: "",
   birth_year: "",
@@ -45,7 +42,6 @@ type AnalyzePageProps = {
 
 export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
   const [values, setValues] = useState<AnalyzeFormValues>(initialValues);
-  const [knownCases, setKnownCases] = useState<CaseListItem[]>([]);
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [response, setResponse] = useState<AnalyzeResponse | null>(null);
@@ -63,22 +59,6 @@ export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
   const currentStatus = String(
     caseResults?.status ?? jobStatus?.status ?? response?.status ?? "ready",
   );
-  const matchingPatientCases = useMemo(() => {
-    const patientCode = values.patient_code.trim().toLowerCase();
-    if (!patientCode) {
-      return [];
-    }
-    return knownCases.filter(
-      (item) => item.patient_code.toLowerCase() === patientCode,
-    );
-  }, [knownCases, values.patient_code]);
-
-  useEffect(() => {
-    listMyCases()
-      .then(setKnownCases)
-      .catch(() => setKnownCases([]));
-  }, []);
-
   useEffect(() => {
     if (!image) {
       setPreviewUrl(null);
@@ -151,8 +131,8 @@ export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
     setJobStatus(null);
     setCaseResults(null);
 
-    if (!values.patient_code.trim() || !values.full_name.trim() || !values.gender.trim()) {
-      setError("Vui lòng nhập mã bệnh nhân, họ tên và giới tính.");
+    if (!values.full_name.trim() || !values.gender.trim()) {
+      setError("Vui lòng nhập họ tên và giới tính.");
       return;
     }
     if (!image) {
@@ -177,7 +157,6 @@ export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
           results: analyzeResponse.results,
         });
       }
-      listMyCases().then(setKnownCases).catch(() => undefined);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không gửi được yêu cầu.");
     } finally {
@@ -279,21 +258,12 @@ export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
               </div>
             </div>
             <label>
-              Mã bệnh nhân
+              Ma benh nhan
               <input
-                className={matchingPatientCases.length > 0 ? "input-warning" : ""}
-                onChange={(event) =>
-                  setValues({ ...values, patient_code: event.target.value })
-                }
-                required
-                value={values.patient_code}
+                disabled
+                placeholder="Tu dong tao khi luu"
+                value=""
               />
-              {matchingPatientCases.length > 0 && (
-                <small className="field-hint warning-text">
-                  Đã có {matchingPatientCases.length} ca với mã này. Hãy kiểm tra
-                  đúng bệnh nhân trước khi gửi ảnh mới.
-                </small>
-              )}
             </label>
             <label>
               Họ tên

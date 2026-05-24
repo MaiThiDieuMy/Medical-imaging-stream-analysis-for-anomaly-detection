@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -232,6 +233,49 @@ def test_retraining_summary_uses_configured_n_and_missing_count(
     assert summary["missing_confirmed_samples"] == 1
     assert summary["evaluation_set_available"] is False
     assert summary["evaluation_warning"]
+
+
+def test_retraining_summary_counts_only_reviews_after_latest_completed_job(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(settings, "retrain_min_confirmed_samples", 2)
+    monkeypatch.setattr(settings, "evaluation_set_dir", str(tmp_path / "missing"))
+    model = _seed_active_model(db_session)
+    old_case = _seed_completed_case(db_session, positive_label="Effusion")
+    new_case = _seed_completed_case(db_session, positive_label="Atelectasis")
+    _confirm_case(db_session, old_case)
+    old_review = db_session.scalar(
+        select(CaseReview).where(CaseReview.case_id == old_case.case_id)
+    )
+    assert old_review is not None
+    old_review.reviewed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    db_session.add(
+        RetrainingJob(
+            status="completed",
+            trigger_type="manual",
+            base_model_id=model.model_id,
+            training_samples_count=1,
+            min_required_samples=2,
+            created_at=datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+    )
+    _confirm_case(db_session, new_case)
+    new_review = db_session.scalar(
+        select(CaseReview).where(CaseReview.case_id == new_case.case_id)
+    )
+    assert new_review is not None
+    new_review.reviewed_at = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    db_session.commit()
+
+    summary = RetrainingService(db_session).get_retraining_summary()
+
+    assert summary["confirmed_reviews"] == 2
+    assert summary["training_ready_cases"] == 1
+    assert summary["missing_confirmed_samples"] == 1
+    assert summary["should_trigger_retraining"] is False
 
 
 def test_pending_low_confidence_review_is_not_training_ready(

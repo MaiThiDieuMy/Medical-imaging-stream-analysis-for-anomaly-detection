@@ -177,6 +177,18 @@ def archive_model(
         raise _model_error_to_http(exc) from exc
 
 
+@router.delete("/models/{model_id}", response_model=AIModelResponse)
+def delete_retrained_model(
+    model_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_admin),
+) -> AIModelResponse:
+    try:
+        return ModelAdminService(db).delete_retrained_model(model_id)
+    except ModelAdminServiceError as exc:
+        raise _model_error_to_http(exc) from exc
+
+
 @router.get("/users", response_model=list[UserResponse])
 def list_users(
     db: Session = Depends(get_db),

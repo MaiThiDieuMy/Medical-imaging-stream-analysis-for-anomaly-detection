@@ -96,6 +96,13 @@ export type PatientSummary = {
   department: string | null;
 };
 
+export type PatientUpdatePayload = {
+  full_name?: string;
+  gender?: string;
+  birth_year?: number | null;
+  department?: string | null;
+};
+
 export type XRayImageSummary = {
   image_id: string;
   file_name: string;
@@ -364,7 +371,6 @@ export type MonitoringSummary = {
 };
 
 export type AnalyzeFormValues = {
-  patient_code: string;
   full_name: string;
   gender: string;
   birth_year: string;

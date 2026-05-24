@@ -190,6 +190,60 @@ def test_cache_miss_creates_case_job_and_enqueues(
     assert Path(saved_image.image_path).exists()
 
 
+def test_cache_miss_auto_generates_patient_code(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    _seed_active_model(db_session)
+    service = AnalyzeService(
+        db_session,
+        storage=ImageStorage(base_dir=tmp_path),
+        enqueue=lambda job_id: None,
+    )
+    request = PatientAnalyzeRequest(
+        full_name="Auto Patient",
+        gender="unknown",
+    )
+
+    service.analyze_upload(request, _uploaded_image(_image_bytes()))
+
+    patient = db_session.execute(select(Patient)).scalar_one()
+    assert patient.patient_code.startswith("PAT-")
+
+
+def test_duplicate_patient_code_is_clear_create_error(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    _seed_active_model(db_session)
+    db_session.add(
+        Patient(
+            patient_code="DUP-001",
+            full_name="Existing",
+            gender="unknown",
+        )
+    )
+    db_session.commit()
+    service = AnalyzeService(
+        db_session,
+        storage=ImageStorage(base_dir=tmp_path),
+        enqueue=lambda job_id: None,
+    )
+
+    with pytest.raises(AnalyzeServiceError) as exc_info:
+        service.analyze_upload(
+            PatientAnalyzeRequest(
+                patient_code="DUP-001",
+                full_name="Duplicate",
+                gender="unknown",
+            ),
+            _uploaded_image(_image_bytes()),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "already exists" in exc_info.value.message
+
+
 def test_invalid_image_content_is_validation_error(db_session: Session) -> None:
     service = AnalyzeService(db_session, enqueue=lambda job_id: None)
 

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.crud.patients import create_patient, get_patient_by_code
 from app.models.ai_model import AIModel
 from app.models.analysis_job import AnalysisJob
 from app.models.analysis_result import AnalysisResult
@@ -43,6 +45,44 @@ def get_or_update_patient(
     patient.birth_year = birth_year
     patient.department = department
     return patient
+
+
+def create_patient_for_analysis(
+    db: Session,
+    *,
+    patient_code: str | None,
+    full_name: str,
+    gender: str,
+    birth_year: int | None,
+    department: str | None,
+) -> Patient:
+    if patient_code:
+        if get_patient_by_code(db, patient_code=patient_code) is not None:
+            raise ValueError(f"Patient ID '{patient_code}' already exists")
+        return create_patient(
+            db,
+            patient_code=patient_code,
+            full_name=full_name,
+            gender=gender,
+            birth_year=birth_year,
+            department=department,
+        )
+
+    for _ in range(10):
+        generated_code = f"PAT-{uuid.uuid4().hex[:10].upper()}"
+        try:
+            return create_patient(
+                db,
+                patient_code=generated_code,
+                full_name=full_name,
+                gender=gender,
+                birth_year=birth_year,
+                department=department,
+            )
+        except IntegrityError:
+            db.rollback()
+
+    raise ValueError("Could not generate a unique Patient ID")
 
 
 def get_cached_case_with_results(

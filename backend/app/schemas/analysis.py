@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PatientAnalyzeRequest(BaseModel):
-    patient_code: str = Field(min_length=1, max_length=20)
+    patient_code: str | None = Field(default=None, min_length=1, max_length=20)
     full_name: str = Field(min_length=1, max_length=100)
     gender: str = Field(min_length=1, max_length=10)
     birth_year: int | None = Field(default=None, ge=1900, le=2100)

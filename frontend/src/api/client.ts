@@ -18,6 +18,8 @@ import type {
   MLflowRegisterResponse,
   MonitoringSummary,
   ModelPayload,
+  PatientSummary,
+  PatientUpdatePayload,
   ManifestExportResponse,
   PromoteModelResponse,
   RetrainingCheckResponse,
@@ -171,7 +173,6 @@ export function analyzeImage(
   image: File,
 ): Promise<AnalyzeResponse> {
   const formData = new FormData();
-  formData.append("patient_code", values.patient_code);
   formData.append("full_name", values.full_name);
   formData.append("gender", values.gender);
   if (values.birth_year.trim()) {
@@ -270,6 +271,16 @@ export function restoreCase(caseId: string): Promise<CaseDetailResponse> {
   });
 }
 
+export function updatePatient(
+  patientId: string,
+  payload: PatientUpdatePayload,
+): Promise<PatientSummary> {
+  return requestJson<PatientSummary>(`/patients/${patientId}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
 export function listModels(): Promise<AIModel[]> {
   return requestJson<AIModel[]>("/admin/models");
 }
@@ -298,6 +309,12 @@ export function activateModel(modelId: string): Promise<AIModel> {
 export function archiveModel(modelId: string): Promise<AIModel> {
   return requestJson<AIModel>(`/admin/models/${modelId}/archive`, {
     method: "POST",
+  });
+}
+
+export function deleteRetrainedModel(modelId: string): Promise<AIModel> {
+  return requestJson<AIModel>(`/admin/models/${modelId}`, {
+    method: "DELETE",
   });
 }
 

@@ -348,6 +348,57 @@ def test_doctor_cannot_restore_another_doctors_case(
     assert response.status_code == 404
 
 
+def test_doctor_updates_patient_without_changing_patient_id(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db, active=True, version="active-v1")
+        doctor = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=doctor,
+            image_path=_image_path(tmp_path, "patient-edit.png"),
+        )
+        patient_id = case.patient.patient_id
+        patient_code = case.patient.patient_code
+
+    headers = _auth_header(client, "doctor_demo", "doctor123")
+    response = client.patch(
+        f"/api/v1/patients/{patient_id}",
+        json={
+            "patient_code": "SHOULD-NOT-CHANGE",
+            "full_name": "Updated Patient",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+    response = client.patch(
+        f"/api/v1/patients/{patient_id}",
+        json={
+            "full_name": "Updated Patient",
+            "gender": "female",
+            "birth_year": 1988,
+            "department": "Radiology",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["patient_code"] == patient_code
+    assert payload["full_name"] == "Updated Patient"
+    assert payload["birth_year"] == 1988
+
+    with session_factory() as db:
+        patient = db.get(Patient, patient_id)
+        assert patient is not None
+        assert patient.patient_code == patient_code
+        assert patient.full_name == "Updated Patient"
+
+
 def test_admin_archives_inactive_model_but_not_active_model(
     client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -378,3 +429,73 @@ def test_admin_archives_inactive_model_but_not_active_model(
         headers=headers,
     )
     assert activate_response.status_code == 409
+
+
+def test_admin_deletes_retrained_model_weights_without_mlflow_history(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    weights_path = tmp_path / "candidate.pth"
+    weights_path.write_bytes(b"weights")
+    with session_factory() as db:
+        _seed_user(db, "admin_demo", "admin123", UserRole.ADMIN)
+        _seed_model(db, active=True, version="active-v1")
+        candidate = AIModel(
+            model_name="phase9-retrained",
+            version="candidate-v1",
+            model_path=str(weights_path),
+            is_active=False,
+            mlflow_run_id="run-123",
+            mlflow_model_uri="runs:/run-123/checkpoint",
+            mlflow_registered_model_name="registered-model",
+            mlflow_model_version="7",
+        )
+        db.add(candidate)
+        db.commit()
+        candidate_id = candidate.model_id
+
+    response = client.delete(
+        f"/api/v1/admin/models/{candidate_id}",
+        headers=_auth_header(client, "admin_demo", "admin123"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["archived_at"] is not None
+    assert payload["model_path"].startswith("deleted://local-weights/")
+    assert payload["mlflow_run_id"] == "run-123"
+    assert payload["mlflow_model_uri"] == "runs:/run-123/checkpoint"
+    assert not weights_path.exists()
+
+
+def test_admin_cannot_delete_active_or_baseline_model(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        _seed_user(db, "admin_demo", "admin123", UserRole.ADMIN)
+        active = _seed_model(db, active=True, version="active-v1")
+        baseline = AIModel(
+            model_name="kaggle-mobilenetv3-small-chest-xray",
+            version="kaggle-v1",
+            model_path="artifacts/models/best_model.pth",
+            is_active=False,
+        )
+        db.add(baseline)
+        db.commit()
+        active_id = active.model_id
+        baseline_id = baseline.model_id
+
+    headers = _auth_header(client, "admin_demo", "admin123")
+    active_response = client.delete(
+        f"/api/v1/admin/models/{active_id}",
+        headers=headers,
+    )
+    baseline_response = client.delete(
+        f"/api/v1/admin/models/{baseline_id}",
+        headers=headers,
+    )
+
+    assert active_response.status_code == 409
+    assert baseline_response.status_code == 409

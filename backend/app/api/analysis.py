@@ -25,6 +25,8 @@ from app.schemas.cases import (
     CaseListItem,
     CaseReviewStatusResponse,
     ConfirmedLabelSummary,
+    PatientSummary,
+    PatientUpdate,
 )
 from app.services.analyze import (
     AnalyzeService,
@@ -32,6 +34,7 @@ from app.services.analyze import (
     UploadedImageData,
 )
 from app.services.cases import CaseService, CaseServiceError
+from app.services.patients import PatientService, PatientServiceError
 from app.services.reviews import ReviewService, ReviewServiceError
 
 router = APIRouter(tags=["analysis"])
@@ -46,6 +49,10 @@ def _case_error_to_http(exc: CaseServiceError) -> HTTPException:
 
 
 def _review_error_to_http(exc: ReviewServiceError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+def _patient_error_to_http(exc: PatientServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
@@ -73,10 +80,10 @@ def _case_review_status_response(
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_xray(
     response: Response,
-    patient_code: Annotated[str, Form(min_length=1, max_length=20)],
     full_name: Annotated[str, Form(min_length=1, max_length=100)],
     gender: Annotated[str, Form(min_length=1, max_length=10)],
     image: Annotated[UploadFile, File()],
+    patient_code: Annotated[str | None, Form(min_length=1, max_length=20)] = None,
     birth_year: Annotated[int | None, Form(ge=1900, le=2100)] = None,
     department: Annotated[str | None, Form(max_length=100)] = None,
     note: Annotated[str | None, Form()] = None,
@@ -109,6 +116,20 @@ async def analyze_xray(
 
     response.status_code = 200 if result.cache_hit else 202
     return result
+
+
+@router.patch("/patients/{patient_id}", response_model=PatientSummary)
+def update_patient(
+    patient_id: UUID,
+    payload: PatientUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> PatientSummary:
+    try:
+        patient = PatientService(db).update_patient(patient_id, payload, current_user)
+    except PatientServiceError as exc:
+        raise _patient_error_to_http(exc) from exc
+    return PatientSummary.model_validate(patient, from_attributes=True)
 
 
 @router.get("/cases/{case_id}/review-status", response_model=CaseReviewStatusResponse)
