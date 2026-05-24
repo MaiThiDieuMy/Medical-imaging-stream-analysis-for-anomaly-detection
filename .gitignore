@@ -245,3 +245,11 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+evaluation_manifests/
+
+pytest-cache-files-*/
+.pytest_cache/
+
+docs/MLOPS_RETRAINING.md
+docs/UI_DESIGN_SPEC.md
+docs/UPDATE_GUIDE.md
