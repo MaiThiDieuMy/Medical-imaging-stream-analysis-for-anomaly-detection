@@ -53,6 +53,8 @@ Core labels:
 
 ## System Architecture
 
+![Docker Compose streaming chest X-ray analysis flow](infra/image/image_infra.png)
+
 ```mermaid
 flowchart LR
     User[Doctor/KTV/Admin] --> FE[React + Vite frontend]
