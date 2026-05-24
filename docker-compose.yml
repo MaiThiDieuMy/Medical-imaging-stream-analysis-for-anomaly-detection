@@ -5,6 +5,8 @@ x-backend-environment: &backend-environment
   API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
   FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
   BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+  AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-demo-development-secret-change-me}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
   DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://xray_demo:xray_demo_password@postgres:5432/xray_streaming}
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}

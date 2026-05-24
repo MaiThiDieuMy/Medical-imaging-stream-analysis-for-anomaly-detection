@@ -37,6 +37,7 @@ const API_BASE_URL = (
 ).replace(/\/$/, "");
 const API_PREFIX = "/api/v1";
 const TOKEN_STORAGE_KEY = "xray_ai_access_token";
+const SKIP_NGROK_BROWSER_WARNING_HEADER = "ngrok-skip-browser-warning";
 
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
@@ -44,6 +45,7 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
+  applyTunnelHeaders(headers);
   let body: BodyInit | undefined;
   const token = getAccessToken();
   if (token) {
@@ -73,6 +75,7 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
 async function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
   const { body: _body, ...fetchOptions } = options;
   const headers = new Headers(options.headers);
+  applyTunnelHeaders(headers);
   const token = getAccessToken();
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
@@ -90,6 +93,7 @@ async function requestBlob(path: string, options: RequestOptions = {}): Promise<
 async function requestText(path: string, options: RequestOptions = {}): Promise<string> {
   const { body: _body, ...fetchOptions } = options;
   const headers = new Headers(options.headers);
+  applyTunnelHeaders(headers);
   const token = getAccessToken();
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
@@ -102,6 +106,12 @@ async function requestText(path: string, options: RequestOptions = {}): Promise<
     throw new Error(await readErrorMessage(response));
   }
   return response.text();
+}
+
+function applyTunnelHeaders(headers: Headers): void {
+  if (API_BASE_URL.includes(".ngrok-free.")) {
+    headers.set(SKIP_NGROK_BROWSER_WARNING_HEADER, "true");
+  }
 }
 
 export function getAccessToken(): string | null {

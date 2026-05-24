@@ -14,6 +14,7 @@ from app.ml.inference import run_inference  # noqa: E402
 from app.ml.labels import DEMO_LABELS  # noqa: E402
 from app.ml.model_loader import (  # noqa: E402
     ARCHITECTURE_MOBILENET_V3_SMALL,
+    MODEL_SOURCE_DEMO,
     MODEL_SOURCE_LOCAL,
     build_model_architecture,
     load_model,
@@ -44,7 +45,16 @@ def test_preprocess_image_returns_expected_tensor_shape() -> None:
 
 
 def test_demo_inference_returns_four_valid_label_outputs() -> None:
-    outputs = run_inference(create_synthetic_image(), threshold=0.5)
+    loaded_model = load_model(
+        model_source=MODEL_SOURCE_DEMO,
+        device="cpu",
+        allow_demo_model=True,
+    )
+    outputs = run_inference(
+        create_synthetic_image(),
+        loaded_model=loaded_model,
+        threshold=0.5,
+    )
 
     assert len(outputs) == 4
     assert tuple(output.label_name for output in outputs) == DEMO_LABELS
