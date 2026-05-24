@@ -16,7 +16,10 @@ frontend/vite.config.d.ts
 artifacts/models/*
 artifacts/sample_images/*
 artifacts/uploads/*
+artifacts/training_seed/*
 artifacts/retraining_manifests/*
+artifacts/retrained_models/*
+artifacts/evaluation_set/*
 *.pt
 *.pth
 *.ckpt

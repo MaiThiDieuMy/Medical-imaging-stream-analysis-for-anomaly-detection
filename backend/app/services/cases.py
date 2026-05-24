@@ -33,17 +33,35 @@ class CaseService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def list_accessible_cases(self, user: User) -> list[CaseListItem]:
+    def list_accessible_cases(
+        self,
+        user: User,
+        *,
+        archive_filter: str = "active",
+    ) -> list[CaseListItem]:
         uploaded_by_id = None if user.role == UserRole.ADMIN else user.user_id
         return [
             self._case_list_item(case)
-            for case in list_cases(self.db, uploaded_by_id=uploaded_by_id)
+            for case in list_cases(
+                self.db,
+                uploaded_by_id=uploaded_by_id,
+                archive_filter=archive_filter,
+            )
         ]
 
-    def list_my_cases(self, user: User) -> list[CaseListItem]:
+    def list_my_cases(
+        self,
+        user: User,
+        *,
+        archive_filter: str = "active",
+    ) -> list[CaseListItem]:
         return [
             self._case_list_item(case)
-            for case in list_cases(self.db, uploaded_by_id=user.user_id)
+            for case in list_cases(
+                self.db,
+                uploaded_by_id=user.user_id,
+                archive_filter=archive_filter,
+            )
         ]
 
     def get_case_detail(self, case_id: uuid.UUID, user: User) -> CaseDetailResponse:
@@ -51,13 +69,25 @@ class CaseService:
         return self._case_detail(case)
 
     def archive_case(self, case_id: uuid.UUID, user: User) -> CaseDetailResponse:
-        if user.role != UserRole.ADMIN:
-            raise CaseServiceError("Admin role required", status_code=403)
         case = get_case(self.db, case_id=case_id)
         if case is None:
-            raise CaseServiceError("XRayCase not found", status_code=404)
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
+        if user.role != UserRole.ADMIN and case.uploaded_by_id != user.user_id:
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
         if case.archived_at is None:
             case.archived_at = datetime.now(timezone.utc)
+            self.db.commit()
+            self.db.refresh(case)
+        return self._case_detail(case)
+
+    def restore_case(self, case_id: uuid.UUID, user: User) -> CaseDetailResponse:
+        case = get_case(self.db, case_id=case_id)
+        if case is None:
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
+        if user.role != UserRole.ADMIN and case.uploaded_by_id != user.user_id:
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
+        if case.archived_at is not None:
+            case.archived_at = None
             self.db.commit()
             self.db.refresh(case)
         return self._case_detail(case)
@@ -65,7 +95,7 @@ class CaseService:
     def get_case_image(self, case_id: uuid.UUID, user: User) -> tuple[bytes, str]:
         case = self._get_accessible_case(case_id, user)
         if case.image is None:
-            raise CaseServiceError("XRayImage not found", status_code=404)
+            raise CaseServiceError("Không tìm thấy ảnh X-quang", status_code=404)
         content = get_image_storage().get_image_bytes(case.image.image_path)
         return content, self._media_type(case.image)
 
@@ -75,7 +105,7 @@ class CaseService:
             "<tr>"
             f"<td>{escape(result.label_name)}</td>"
             f"<td>{result.probability * 100:.1f}%</td>"
-            f"<td>{'Positive' if result.predicted_positive else 'Negative'}</td>"
+            f"<td>{'Nhãn chính' if result.predicted_positive else 'Không chọn'}</td>"
             "</tr>"
             for result in detail.results
         )
@@ -97,27 +127,27 @@ class CaseService:
   </style>
 </head>
 <body>
-  <h1>X-Ray AI Analysis Report</h1>
-  <p class="muted">Demo report. Not clinically meaningful.</p>
-  <h2>Patient</h2>
+  <h1>Báo cáo phân tích AI ảnh X-quang</h1>
+  <p class="muted">Báo cáo hỗ trợ tham khảo, cần bác sĩ/KTV xác nhận lâm sàng.</p>
+  <h2>Thông tin bệnh nhân</h2>
   <dl>
-    <dt>Patient code</dt><dd>{escape(detail.patient.patient_code)}</dd>
-    <dt>Full name</dt><dd>{escape(detail.patient.full_name)}</dd>
-    <dt>Gender</dt><dd>{escape(detail.patient.gender)}</dd>
-    <dt>Birth year</dt><dd>{detail.patient.birth_year or '-'}</dd>
-    <dt>Department</dt><dd>{escape(detail.patient.department or '-')}</dd>
+    <dt>Mã bệnh nhân</dt><dd>{escape(detail.patient.patient_code)}</dd>
+    <dt>Họ tên</dt><dd>{escape(detail.patient.full_name)}</dd>
+    <dt>Giới tính</dt><dd>{escape(detail.patient.gender)}</dd>
+    <dt>Năm sinh</dt><dd>{detail.patient.birth_year or '-'}</dd>
+    <dt>Khoa/phòng</dt><dd>{escape(detail.patient.department or '-')}</dd>
   </dl>
-  <h2>Case</h2>
+  <h2>Thông tin ca chụp</h2>
   <dl>
-    <dt>Case ID</dt><dd>{detail.case_id}</dd>
-    <dt>Status</dt><dd>{escape(detail.status)}</dd>
-    <dt>Model version</dt><dd>{escape(detail.model_version or '-')}</dd>
-    <dt>Review status</dt><dd>{escape(detail.review_status or '-')}</dd>
-    <dt>Note</dt><dd>{escape(detail.note or '-')}</dd>
+    <dt>Mã ca</dt><dd>{detail.case_id}</dd>
+    <dt>Trạng thái</dt><dd>{escape(detail.status)}</dd>
+    <dt>Phiên bản model</dt><dd>{escape(detail.model_version or '-')}</dd>
+    <dt>Trạng thái xác nhận</dt><dd>{escape(detail.review_status or '-')}</dd>
+    <dt>Ghi chú</dt><dd>{escape(detail.note or '-')}</dd>
   </dl>
-  <h2>AI Results</h2>
+  <h2>Kết quả AI</h2>
   <table>
-    <thead><tr><th>Label</th><th>Probability</th><th>Prediction</th></tr></thead>
+    <thead><tr><th>Nhãn</th><th>Xác suất</th><th>Dự đoán</th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
 </body>
@@ -129,12 +159,28 @@ class CaseService:
     def _get_accessible_case(self, case_id: uuid.UUID, user: User) -> XRayCase:
         case = get_case(self.db, case_id=case_id)
         if case is None:
-            raise CaseServiceError("XRayCase not found", status_code=404)
-        if user.role != UserRole.ADMIN and case.uploaded_by_id != user.user_id:
-            raise CaseServiceError("XRayCase not found", status_code=404)
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
+        if (
+            user.role != UserRole.ADMIN
+            and case.uploaded_by_id != user.user_id
+            and (
+                case.review is None
+                or (
+                    case.review.status != "pending"
+                    and case.review.reviewed_by_id != user.user_id
+                )
+            )
+        ):
+            raise CaseServiceError("Không tìm thấy ca chụp", status_code=404)
         return case
 
     def _case_list_item(self, case: XRayCase) -> CaseListItem:
+        primary_result = None
+        if case.analysis_results:
+            primary_result = max(
+                case.analysis_results,
+                key=lambda result: result.probability,
+            ).label_name
         return CaseListItem(
             case_id=case.case_id,
             status=case.status.value,
@@ -144,6 +190,7 @@ class CaseService:
             model_version=(
                 case.analysis_job.model.version if case.analysis_job is not None else None
             ),
+            primary_result=primary_result,
             review_status=case.review.status if case.review is not None else None,
             created_at=case.created_at,
             updated_at=case.updated_at,

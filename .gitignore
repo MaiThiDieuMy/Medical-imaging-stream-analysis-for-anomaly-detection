@@ -223,8 +223,14 @@ artifacts/models/*
 artifacts/sample_images/*
 !artifacts/sample_images/README.md
 artifacts/uploads/*
+artifacts/training_seed/*
+!artifacts/training_seed/README.md
 artifacts/retraining_manifests/*
 !artifacts/retraining_manifests/README.md
+artifacts/retrained_models/*
+!artifacts/retrained_models/README.md
+artifacts/evaluation_set/*
+!artifacts/evaluation_set/README.md
 
 # Model weights and export formats
 *.pt

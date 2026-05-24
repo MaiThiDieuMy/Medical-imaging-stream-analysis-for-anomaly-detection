@@ -19,6 +19,7 @@ import {
 function App() {
   const [currentUser, setCurrentUser] = useState<UserPublic | null>(null);
   const [page, setPage] = useState<PageKey>("dashboard");
+  const [caseToOpen, setCaseToOpen] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(getAccessToken()));
 
   useEffect(() => {
@@ -49,7 +50,13 @@ function App() {
   async function handleLogout() {
     await logout();
     setCurrentUser(null);
+    setCaseToOpen(null);
     setPage("dashboard");
+  }
+
+  function openCase(caseId: string) {
+    setCaseToOpen(caseId);
+    setPage("cases");
   }
 
   if (authLoading) {
@@ -89,6 +96,7 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-user">
+          <span>Hồ sơ cá nhân</span>
           <span>{roleLabel(currentUser.role)}</span>
           <strong>{currentUser.full_name}</strong>
           <small>{currentUser.username}</small>
@@ -99,10 +107,20 @@ function App() {
       </aside>
       <main className="content">
         {page === "dashboard" && (
-          <DashboardPage currentUser={currentUser} onNavigate={setPage} />
+          <DashboardPage
+            currentUser={currentUser}
+            onNavigate={setPage}
+            onOpenCase={openCase}
+          />
         )}
-        {page === "analyze" && <AnalyzePage onOpenCases={() => setPage("cases")} />}
-        {page === "cases" && <CasesPage role={currentUser.role} />}
+        {page === "analyze" && <AnalyzePage onOpenCase={openCase} />}
+        {page === "cases" && (
+          <CasesPage
+            initialCaseId={caseToOpen}
+            onOpenReviews={() => setPage("reviews")}
+            role={currentUser.role}
+          />
+        )}
         {page === "models" && <AdminModelsPage />}
         {page === "reviews" && (
           <ReviewMlopsPage isAdmin={currentUser.role === "admin"} />

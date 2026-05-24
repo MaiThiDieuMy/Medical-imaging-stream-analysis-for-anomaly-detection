@@ -15,19 +15,19 @@ export type NavigationItem = {
 };
 
 const doctorNavigation: NavigationItem[] = [
-  { key: "dashboard", label: "Dashboard" },
+  { key: "dashboard", label: "Tổng quan" },
   { key: "analyze", label: "Phân tích ảnh" },
   { key: "cases", label: "Lịch sử ca chụp" },
   { key: "reviews", label: "Duyệt ca" },
 ];
 
 const adminNavigation: NavigationItem[] = [
-  { key: "dashboard", label: "Dashboard" },
+  { key: "dashboard", label: "Tổng quan" },
   { key: "users", label: "Người dùng" },
   { key: "models", label: "Mô hình AI" },
   { key: "reviews", label: "Duyệt ca" },
   { key: "cases", label: "Tất cả ca chụp" },
-  { key: "monitoring", label: "Monitoring" },
+  { key: "monitoring", label: "Giám sát" },
 ];
 
 export function getNavigationForRole(role: UserRole): NavigationItem[] {

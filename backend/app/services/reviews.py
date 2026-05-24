@@ -16,13 +16,15 @@ from app.crud.reviews import (
     get_review_by_case,
     list_case_results,
     list_reviews_by_status,
+    list_reviews_visible_to_user,
     list_training_ready_reviews,
 )
 from app.ml.labels import DEMO_LABELS
 from app.ml.types import InferenceOutput
 from app.models.case_review import CaseReview
 from app.models.confirmed_label import ConfirmedLabel
-from app.models.enums import ProcessingStatus
+from app.models.enums import ProcessingStatus, UserRole
+from app.models.user import User
 
 REVIEW_STATUS_PENDING = "pending"
 REVIEW_STATUS_CONFIRMED = "confirmed"
@@ -115,10 +117,19 @@ class ReviewService:
     def list_pending_reviews(self) -> list[CaseReview]:
         return list_reviews_by_status(self.db, statuses={REVIEW_STATUS_PENDING})
 
+    def list_visible_reviews(self, user: User) -> list[CaseReview]:
+        user_id = None if user.role == UserRole.ADMIN else user.user_id
+        return list_reviews_visible_to_user(self.db, user_id=user_id)
+
     def get_review(self, review_id: uuid.UUID) -> CaseReview:
         review = get_review(self.db, review_id=review_id)
         if review is None:
             raise ReviewServiceError("CaseReview not found", status_code=404)
+        return review
+
+    def get_review_for_user(self, review_id: uuid.UUID, user: User) -> CaseReview:
+        review = self.get_review(review_id)
+        self._ensure_review_access(review, user)
         return review
 
     def confirm_review(
@@ -127,8 +138,11 @@ class ReviewService:
         *,
         note: str | None = None,
         reviewed_by: uuid.UUID | None = None,
+        user: User | None = None,
     ) -> CaseReview:
-        review = self._get_pending_review(review_id)
+        review = self._get_review_for_update(review_id)
+        if user is not None:
+            self._ensure_review_access(review, user)
         results = list_case_results(self.db, case_id=review.case_id)
         labels = {result.label_name: result.predicted_positive for result in results}
         self._validate_complete_label_set(labels)
@@ -148,8 +162,11 @@ class ReviewService:
         labels: dict[str, bool],
         note: str | None = None,
         reviewed_by: uuid.UUID | None = None,
+        user: User | None = None,
     ) -> CaseReview:
-        review = self._get_pending_review(review_id)
+        review = self._get_review_for_update(review_id)
+        if user is not None:
+            self._ensure_review_access(review, user)
         self._validate_complete_label_set(labels)
         self._validate_single_positive_label(labels)
         return self._complete_review(
@@ -195,7 +212,6 @@ class ReviewService:
             case_id,
             reason="Doctor/admin manual confirmation for completed case.",
         )
-        self._ensure_review_can_receive_confirmed_labels(review)
         results = list_case_results(self.db, case_id=review.case_id)
         labels = {result.label_name: result.predicted_positive for result in results}
         self._validate_complete_label_set(labels)
@@ -220,7 +236,6 @@ class ReviewService:
             case_id,
             reason="Doctor/admin manual label correction for completed case.",
         )
-        self._ensure_review_can_receive_confirmed_labels(review)
         self._validate_complete_label_set(labels)
         self._validate_single_positive_label(labels)
         return self._complete_review(
@@ -275,13 +290,26 @@ class ReviewService:
             )
         return review
 
-    @staticmethod
-    def _ensure_review_can_receive_confirmed_labels(review: CaseReview) -> None:
-        if review.status in TRAINING_READY_STATUSES or review.confirmed_labels:
+    def _get_review_for_update(self, review_id: uuid.UUID) -> CaseReview:
+        review = self.get_review(review_id)
+        if review.status not in TRAINING_READY_STATUSES | {REVIEW_STATUS_PENDING}:
             raise ReviewServiceError(
-                "Case already has confirmed labels. Reopen/edit workflow is not implemented.",
+                "Review status does not allow confirmation or correction",
                 status_code=409,
             )
+        return review
+
+    @staticmethod
+    def _ensure_review_access(review: CaseReview, user: User) -> None:
+        if user.role == UserRole.ADMIN:
+            return
+        if review.status == REVIEW_STATUS_PENDING:
+            return
+        if review.reviewed_by_id == user.user_id:
+            return
+        if review.case is not None and review.case.uploaded_by_id == user.user_id:
+            return
+        raise ReviewServiceError("CaseReview not found", status_code=404)
 
     def _complete_review(
         self,
@@ -306,7 +334,9 @@ class ReviewService:
             status,
             reviewed_by,
         )
-        return self.get_review(review.review_id)
+        completed_review = self.get_review(review.review_id)
+        self._maybe_auto_start_retraining(reviewed_by=reviewed_by)
+        return completed_review
 
     @staticmethod
     def _validate_complete_label_set(labels: dict[str, bool]) -> None:
@@ -324,6 +354,27 @@ class ReviewService:
                 "Exactly one label must be selected for multi-class retraining",
                 status_code=422,
             )
+
+    def _maybe_auto_start_retraining(
+        self,
+        *,
+        reviewed_by: uuid.UUID | None,
+    ) -> None:
+        if not settings.retrain_auto_start:
+            return
+        try:
+            from app.services.retraining import RetrainingService
+
+            job = RetrainingService(self.db).maybe_auto_start_retraining(
+                triggered_by=reviewed_by,
+            )
+            if job is not None:
+                logger.info(
+                    "Auto-created retraining job after review confirmation: job_id=%s",
+                    job.retraining_job_id,
+                )
+        except Exception:
+            logger.exception("Auto retraining check failed after review confirmation")
 
 
 def confirmed_label_items(review: CaseReview) -> list[ConfirmedLabel]:

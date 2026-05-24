@@ -49,6 +49,7 @@ class CaseListItem(BaseModel):
     patient_name: str
     uploaded_by: UUID | None = None
     model_version: str | None = None
+    primary_result: str | None = None
     review_status: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -88,6 +89,10 @@ class CaseReviewStatusResponse(BaseModel):
     reviewed_at: datetime | None = None
     note: str | None = None
     confirmed_labels: list[ConfirmedLabelSummary] = Field(default_factory=list)
+
+
+class CaseConfirmResultRequest(BaseModel):
+    note: str | None = None
 
 
 class CaseLabelCorrection(BaseModel):

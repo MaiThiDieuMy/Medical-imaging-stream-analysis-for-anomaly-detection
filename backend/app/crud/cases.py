@@ -26,7 +26,7 @@ def list_cases(
     db: Session,
     *,
     uploaded_by_id: uuid.UUID | None = None,
-    include_archived: bool = False,
+    archive_filter: str = "active",
 ) -> list[XRayCase]:
     statement = (
         select(XRayCase)
@@ -34,8 +34,12 @@ def list_cases(
         .order_by(XRayCase.created_at.desc())
         .options(*_case_options())
     )
-    if not include_archived:
+    if archive_filter == "active":
         statement = statement.where(XRayCase.archived_at.is_(None))
+    elif archive_filter == "archived":
+        statement = statement.where(XRayCase.archived_at.is_not(None))
+    elif archive_filter != "all":
+        raise ValueError("archive_filter must be active, archived, or all")
     if uploaded_by_id is not None:
         statement = statement.where(XRayCase.uploaded_by_id == uploaded_by_id)
     return list(db.execute(statement).unique().scalars())

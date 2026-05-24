@@ -12,13 +12,24 @@ from torch.utils.data import DataLoader, Subset, random_split
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.crud.ai_models import activate_model, create_model, get_active_model
+from app.crud.ai_models import create_model, get_active_model
 from app.ml.evaluation import evaluate_multiclass_model
-from app.ml.model_loader import load_model
-from app.ml.retraining_dataset import RETRAIN_CLASS_ORDER, RetrainingManifestDataset
+from app.ml.evaluation_set import (
+    FALLBACK_EVALUATION_SOURCE,
+    build_fixed_evaluation_loader,
+)
+from app.ml.finetune_dataset import FineTuneManifestDataset
+from app.ml.model_loader import (
+    ARCHITECTURE_MOBILENET_V3_SMALL,
+    MODEL_SOURCE_LOCAL,
+    build_model_architecture,
+    load_model,
+)
+from app.ml.retraining_dataset import RETRAIN_CLASS_ORDER
 from app.mlops.mlflow_registry import ensure_experiment, register_model_version
 from app.models.retraining_job import RetrainingJob
 from app.services.retraining import RetrainingService
+from app.services.retraining import RETRAINING_TRIGGER_MANUAL_FORCE
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -32,7 +43,7 @@ def _parse_job_id(retraining_job_id: str) -> uuid.UUID:
 
 
 def _split_dataset(
-    dataset: RetrainingManifestDataset,
+    dataset: FineTuneManifestDataset,
 ) -> tuple[Subset, Subset, str | None]:
     sample_count = len(dataset)
     if sample_count < 2:
@@ -57,6 +68,7 @@ def _train_classifier_head(
     train_loader: DataLoader,
     *,
     device: torch.device,
+    epochs: int,
 ) -> None:
     for parameter in model.parameters():
         parameter.requires_grad = False
@@ -77,7 +89,7 @@ def _train_classifier_head(
     )
     criterion = nn.CrossEntropyLoss()
     model.train()
-    for _epoch in range(settings.retrain_epochs):
+    for _epoch in range(epochs):
         for images, labels in train_loader:
             images = images.to(device)
             labels = labels.to(device)
@@ -94,6 +106,13 @@ def _log_to_mlflow(
     checkpoint_path: Path,
     manifest_path: Path,
     metrics: dict[str, float],
+    epochs: int,
+    evaluation_source: str,
+    evaluation_warning: str | None,
+    seed_count: int,
+    confirmed_count: int,
+    total_train_count: int,
+    per_class_count: dict[str, int],
 ) -> tuple[str | None, str | None, str | None]:
     try:
         import mlflow
@@ -120,12 +139,19 @@ def _log_to_mlflow(
             mlflow.log_params(
                 {
                     "base_model_id": str(job.base_model_id),
-                    "architecture": settings.model_architecture,
+                    "architecture": ARCHITECTURE_MOBILENET_V3_SMALL,
                     "task_type": "multi_class",
-                    "training_samples_count": job.training_samples_count,
-                    "epochs": settings.retrain_epochs,
+                    "class_order": ",".join(RETRAIN_CLASS_ORDER),
+                    "sample_count": total_train_count,
+                    "seed_count": seed_count,
+                    "confirmed_count": confirmed_count,
+                    "total_train_count": total_train_count,
+                    "per_class_count": json.dumps(per_class_count, sort_keys=True),
+                    "epochs": epochs,
                     "batch_size": settings.retrain_batch_size,
                     "learning_rate": settings.retrain_learning_rate,
+                    "evaluation_source": evaluation_source,
+                    "evaluation_warning": evaluation_warning or "",
                 }
             )
             mlflow.log_metrics(metrics)
@@ -144,8 +170,45 @@ def _log_to_mlflow(
         class_mapping_path.unlink(missing_ok=True)
 
 
+def _load_mobile_net_for_retraining(base_model_path: str | None) -> tuple[nn.Module, torch.device]:
+    device = torch.device(settings.model_device)
+    model_path = settings.model_weights_path or base_model_path or ""
+    if model_path and Path(model_path).is_file():
+        loaded = load_model(
+            model_source=MODEL_SOURCE_LOCAL,
+            model_path=model_path,
+            architecture=ARCHITECTURE_MOBILENET_V3_SMALL,
+            device=device,
+            allow_demo_model=False,
+        )
+        return loaded.model, loaded.device
+
+    if not settings.allow_demo_model:
+        raise FileNotFoundError(
+            "No MobileNetV3-Small checkpoint found for retraining. "
+            "Set MODEL_WEIGHTS_PATH or register an active AIModel with model_path."
+        )
+
+    logger.warning(
+        "No checkpoint found for retraining; using randomly initialized "
+        "MobileNetV3-Small for pipeline testing only."
+    )
+    model = build_model_architecture(ARCHITECTURE_MOBILENET_V3_SMALL)
+    model.to(device)
+    return model, device
+
+
+def _combine_warnings(*warnings: str | None) -> str | None:
+    active_warnings = [warning for warning in warnings if warning]
+    return "; ".join(active_warnings) if active_warnings else None
+
+
 @celery_app.task(name="app.tasks.retraining.fine_tune_model", bind=True)
-def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None]:
+def fine_tune_model(
+    self,
+    retraining_job_id: str,
+    epochs: int | None = None,
+) -> dict[str, str | bool | None]:
     parsed_job_id = _parse_job_id(retraining_job_id)
     db = SessionLocal()
     service = RetrainingService(db)
@@ -153,9 +216,24 @@ def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None
         job = service.get_job(parsed_job_id)
         service.mark_job_running(job)
         manifest_info = service.export_manifest_for_job(job)
+        sample_count = int(manifest_info["samples_count"])
+        seed_count = int(manifest_info.get("seed_count", 0))
+        confirmed_count = int(manifest_info.get("confirmed_count", sample_count))
+        total_train_count = int(manifest_info.get("total_train_count", sample_count))
+        per_class_count = dict(manifest_info.get("per_class_count", {}))
+        if total_train_count <= 0:
+            raise ValueError("Retraining job has no fine-tune samples")
+        if (
+            confirmed_count < job.min_required_samples
+            and job.trigger_type != RETRAINING_TRIGGER_MANUAL_FORCE
+        ):
+            raise ValueError(
+                "Not enough confirmed/corrected samples for retraining: "
+                f"{confirmed_count}/{job.min_required_samples}"
+            )
         manifest_path = Path(str(manifest_info["manifest_path"]))
 
-        dataset = RetrainingManifestDataset(manifest_path)
+        dataset = FineTuneManifestDataset(manifest_path)
         train_dataset, validation_dataset, warning = _split_dataset(dataset)
         train_loader = DataLoader(
             train_dataset,
@@ -167,30 +245,46 @@ def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None
             batch_size=settings.retrain_batch_size,
             shuffle=False,
         )
+        evaluation_loader, evaluation_status = build_fixed_evaluation_loader(
+            batch_size=settings.retrain_batch_size,
+        )
+        evaluation_source = evaluation_status.evaluation_source
+        evaluation_warning = evaluation_status.warning
+        if evaluation_loader is None:
+            evaluation_loader = validation_loader
+            evaluation_source = FALLBACK_EVALUATION_SOURCE
+            evaluation_warning = _combine_warnings(
+                evaluation_warning,
+                warning,
+                "Candidate metrics are based on training validation split only.",
+            )
 
         base_model = get_active_model(db)
         if base_model is None:
             raise ValueError("No active model available for retraining")
-        loaded = load_model(
-            model_source=settings.model_source,
-            model_path=settings.model_weights_path or base_model.model_path,
-            architecture=settings.model_architecture,
-            device=settings.model_device,
-            allow_demo_model=settings.allow_demo_model,
-        )
-        model = loaded.model
-        device = loaded.device
-        _train_classifier_head(model, train_loader, device=device)
-        metrics = evaluate_multiclass_model(model, validation_loader, device)
+        model, device = _load_mobile_net_for_retraining(base_model.model_path)
+        effective_epochs = epochs or settings.retrain_epochs
+        _train_classifier_head(model, train_loader, device=device, epochs=effective_epochs)
+        metrics = evaluate_multiclass_model(model, evaluation_loader, device)
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         output_dir = Path(settings.retrain_output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_path = output_dir / f"retrained_{timestamp}.pth"
+        checkpoint_path = output_dir / f"mobilenetv3_retrained_{timestamp}.pth"
         torch.save(
             {
                 "state_dict": model.state_dict(),
                 "classes": list(RETRAIN_CLASS_ORDER),
+                "architecture": ARCHITECTURE_MOBILENET_V3_SMALL,
+                "task_type": "multi_class",
+                "base_model_id": str(base_model.model_id),
+                "sample_count": total_train_count,
+                "seed_count": seed_count,
+                "confirmed_count": confirmed_count,
+                "total_train_count": total_train_count,
+                "per_class_count": per_class_count,
+                "evaluation_source": evaluation_source,
+                "evaluation_warning": evaluation_warning,
             },
             checkpoint_path,
         )
@@ -200,6 +294,13 @@ def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None
             checkpoint_path=checkpoint_path,
             manifest_path=manifest_path,
             metrics=metrics,
+            epochs=effective_epochs,
+            evaluation_source=evaluation_source,
+            evaluation_warning=evaluation_warning,
+            seed_count=seed_count,
+            confirmed_count=confirmed_count,
+            total_train_count=total_train_count,
+            per_class_count=per_class_count,
         )
         candidate = create_model(
             db,
@@ -216,19 +317,6 @@ def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None
             mlflow_registered_model_name=settings.mlflow_registered_model_name,
             mlflow_model_version=mlflow_version,
         )
-        promoted = False
-        active = get_active_model(db)
-        if (
-            settings.auto_promote_retrained_model
-            and active is not None
-            and (
-                active.f1_score is None
-                or candidate.f1_score is not None
-                and candidate.f1_score >= active.f1_score
-            )
-        ):
-            activate_model(db, model=candidate)
-            promoted = True
 
         service.mark_job_completed(
             job,
@@ -237,13 +325,13 @@ def fine_tune_model(self, retraining_job_id: str) -> dict[str, str | bool | None
             mlflow_run_id=mlflow_run_id,
             mlflow_model_uri=mlflow_model_uri,
             metrics=metrics,
-            warning=warning,
+            warning=evaluation_warning,
         )
         return {
             "retraining_job_id": str(job.retraining_job_id),
             "status": "completed",
             "candidate_model_id": str(candidate.model_id),
-            "promoted": promoted,
+            "promoted": False,
             "mlflow_run_id": mlflow_run_id,
         }
     except Exception as exc:

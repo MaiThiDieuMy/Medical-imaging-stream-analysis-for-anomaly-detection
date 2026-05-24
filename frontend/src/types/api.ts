@@ -2,6 +2,8 @@ export type ProcessingStatus = "queued" | "processing" | "completed" | "failed";
 
 export type UserRole = "user" | "admin";
 
+export type ArchiveFilter = "active" | "archived" | "all";
+
 export type UserPublic = {
   user_id: string;
   username: string;
@@ -121,6 +123,7 @@ export type CaseListItem = {
   patient_name: string;
   uploaded_by: string | null;
   model_version: string | null;
+  primary_result: string | null;
   review_status: string | null;
   created_at: string;
   updated_at: string;
@@ -216,6 +219,10 @@ export type MLflowModelsResponse = {
 export type PromoteModelResponse = {
   promoted: boolean;
   reason: string;
+  promotion_metric: string;
+  candidate_metric: number | null;
+  active_metric: number | null;
+  promotion_recommended: boolean;
   candidate_model: AIModel;
   previous_active_model: AIModel | null;
   active_model: AIModel;
@@ -253,7 +260,12 @@ export type LabelCorrection = {
 export type TrainingReadySample = {
   review_id: string;
   case_id: string;
-  status: string;
+  image_path: string;
+  label_name: string;
+  label_index: number;
+  review_status: string;
+  reviewed_by: string | null;
+  created_at: string;
   confirmed_labels: ConfirmedLabelItem[];
 };
 
@@ -263,7 +275,18 @@ export type RetrainingSummary = {
   confirmed_reviews: number;
   corrected_reviews: number;
   training_ready_cases: number;
+  training_seed_enabled: boolean;
+  training_seed_dir: string;
+  training_seed_count: number;
+  total_finetune_samples: number;
+  finetune_per_class_count: Record<string, number>;
+  missing_confirmed_samples: number;
   should_trigger_retraining: boolean;
+  retrain_auto_start: boolean;
+  evaluation_set_available: boolean;
+  evaluation_set_sample_count: number;
+  evaluation_set_dir: string;
+  evaluation_warning: string | null;
   running_job: RetrainingJob | null;
   latest_job: RetrainingJob | null;
 };
@@ -275,6 +298,7 @@ export type RetrainingCheckResponse = RetrainingSummary & {
 export type RetrainingJob = {
   retraining_job_id: string;
   status: string;
+  trigger_type: string;
   base_model_id: string;
   candidate_model_id: string | null;
   manifest_path: string | null;
@@ -294,9 +318,19 @@ export type RetrainingJob = {
   triggered_by_id: string | null;
 };
 
+export type RetrainingStartPayload = {
+  force?: boolean;
+  epochs?: number;
+  min_samples?: number;
+};
+
 export type ManifestExportResponse = {
   manifest_path: string;
   samples_count: number;
+  seed_count: number;
+  confirmed_count: number;
+  total_train_count: number;
+  per_class_count: Record<string, number>;
   message: string;
 };
 
@@ -308,6 +342,10 @@ export type MonitoringActiveModel = {
   f1_score: number | null;
   precision_score: number | null;
   recall_score: number | null;
+  mlflow_run_id: string | null;
+  mlflow_model_uri: string | null;
+  mlflow_registered_model_name: string | null;
+  mlflow_model_version: string | null;
   created_at: string;
 };
 

@@ -227,6 +227,67 @@ def test_admin_cases_lists_all_cases(
     assert len(response.json()) == 2
 
 
+def test_doctor_can_get_own_case_detail(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db)
+        doctor = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=doctor,
+            patient_code="DETAIL-001",
+            image_path=_image_path(tmp_path, "detail.png"),
+        )
+
+    response = client.get(
+        f"/api/v1/cases/{case.case_id}",
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["patient"]["patient_code"] == "DETAIL-001"
+
+
+def test_doctor_can_get_pending_review_case_detail_without_assignment(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db)
+        reviewer = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)
+        owner = _seed_user(db, "doctor_owner", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=owner,
+            patient_code="PENDING-001",
+            image_path=_image_path(tmp_path, "pending-review.png"),
+        )
+        db.add(
+            CaseReview(
+                case_id=case.case_id,
+                status="pending",
+                reason="pending demo",
+            )
+        )
+        db.commit()
+        assert reviewer.is_active
+        case_id = case.case_id
+
+    response = client.get(
+        f"/api/v1/cases/{case_id}",
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["review_status"] == "pending"
+
+
 def test_case_report_endpoint_returns_html(
     client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
     tmp_path: Path,
@@ -261,6 +322,7 @@ def test_manifest_export_excludes_pending_reviews(
 ) -> None:
     _, session_factory = client_and_session_factory
     monkeypatch.setattr(settings, "retraining_manifest_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "training_seed_dir", str(tmp_path / "missing_seed"))
     with session_factory() as db:
         model = _seed_model(db)
         doctor = _seed_user(db, "doctor_demo", "doctor123", UserRole.USER)

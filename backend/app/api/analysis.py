@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_admin, require_doctor_or_admin
+from app.core.auth import require_doctor_or_admin
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
@@ -19,6 +19,7 @@ from app.schemas.analysis import (
     PatientAnalyzeRequest,
 )
 from app.schemas.cases import (
+    CaseConfirmResultRequest,
     CaseCorrectLabelsRequest,
     CaseDetailResponse,
     CaseListItem,
@@ -127,13 +128,16 @@ def get_case_review_status(
 @router.post("/cases/{case_id}/confirm-result", response_model=CaseReviewStatusResponse)
 def confirm_case_result(
     case_id: UUID,
+    payload: CaseConfirmResultRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor_or_admin),
 ) -> CaseReviewStatusResponse:
+    payload = payload or CaseConfirmResultRequest()
     try:
         CaseService(db).ensure_access(case_id, current_user)
         review = ReviewService(db).confirm_case_result(
             case_id,
+            note=payload.note,
             reviewed_by=current_user.user_id,
         )
         return _case_review_status_response(case_id, review)
@@ -167,18 +171,26 @@ def correct_case_labels(
 
 @router.get("/cases", response_model=list[CaseListItem])
 def list_cases(
+    archive_filter: str = Query("active", pattern="^(active|archived|all)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor_or_admin),
 ) -> list[CaseListItem]:
-    return CaseService(db).list_accessible_cases(current_user)
+    return CaseService(db).list_accessible_cases(
+        current_user,
+        archive_filter=archive_filter,
+    )
 
 
 @router.get("/cases/my", response_model=list[CaseListItem])
 def list_my_cases(
+    archive_filter: str = Query("active", pattern="^(active|archived|all)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_doctor_or_admin),
 ) -> list[CaseListItem]:
-    return CaseService(db).list_my_cases(current_user)
+    return CaseService(db).list_my_cases(
+        current_user,
+        archive_filter=archive_filter,
+    )
 
 
 @router.get("/cases/{case_id}", response_model=CaseDetailResponse)
@@ -197,10 +209,22 @@ def get_case_detail(
 def archive_case(
     case_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_doctor_or_admin),
 ) -> CaseDetailResponse:
     try:
         return CaseService(db).archive_case(case_id, current_user)
+    except CaseServiceError as exc:
+        raise _case_error_to_http(exc) from exc
+
+
+@router.patch("/cases/{case_id}/restore", response_model=CaseDetailResponse)
+def restore_case(
+    case_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> CaseDetailResponse:
+    try:
+        return CaseService(db).restore_case(case_id, current_user)
     except CaseServiceError as exc:
         raise _case_error_to_http(exc) from exc
 

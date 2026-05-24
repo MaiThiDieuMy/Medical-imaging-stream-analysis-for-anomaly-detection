@@ -12,6 +12,7 @@ def create_retraining_job(
     db: Session,
     *,
     status: str,
+    trigger_type: str,
     base_model_id: uuid.UUID,
     training_samples_count: int,
     min_required_samples: int,
@@ -19,6 +20,7 @@ def create_retraining_job(
 ) -> RetrainingJob:
     job = RetrainingJob(
         status=status,
+        trigger_type=trigger_type,
         base_model_id=base_model_id,
         training_samples_count=training_samples_count,
         min_required_samples=min_required_samples,

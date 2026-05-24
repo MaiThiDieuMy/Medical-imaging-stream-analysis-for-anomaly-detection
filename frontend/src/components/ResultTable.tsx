@@ -27,9 +27,9 @@ export function ResultTable({ results }: ResultTableProps) {
         <div>
           <span className="eyebrow">AI đề xuất</span>
           <strong>{topResult.label_name}</strong>
-          <p>Model confidence {formatPercent(topResult.probability)}</p>
+          <p>Độ tin cậy {formatPercent(topResult.probability)}</p>
         </div>
-        <StatusBadge value={topResult.predicted_positive ? "positive" : "draft"} />
+        <StatusBadge value={topResult.predicted_positive ? "Dự đoán chính" : "Cần xem lại"} />
       </div>
 
       <div className="result-list" aria-label="AI result probabilities">
@@ -37,7 +37,7 @@ export function ResultTable({ results }: ResultTableProps) {
           <div className="result-row" key={result.label_name}>
             <div>
               <strong>{result.label_name}</strong>
-              <span>{result.predicted_positive ? "Predicted positive" : "Not flagged"}</span>
+              <span>{result.predicted_positive ? "Được AI chọn" : "Không phải nhãn chính"}</span>
             </div>
             <div className="probability-cell">
               <span>{formatPercent(result.probability)}</span>

@@ -29,10 +29,17 @@ x-backend-environment: &backend-environment
   RETRAIN_BATCH_SIZE: ${RETRAIN_BATCH_SIZE:-8}
   RETRAIN_LEARNING_RATE: ${RETRAIN_LEARNING_RATE:-0.0001}
   RETRAIN_VALIDATION_SPLIT: ${RETRAIN_VALIDATION_SPLIT:-0.2}
-  AUTO_PROMOTE_RETRAINED_MODEL: ${AUTO_PROMOTE_RETRAINED_MODEL:-false}
-  RETRAIN_OUTPUT_DIR: ${RETRAIN_OUTPUT_DIR:-/app/artifacts/models/retrained}
+  RETRAIN_AUTO_START: ${RETRAIN_AUTO_START:-false}
+  TRAINING_SEED_DIR: ${TRAINING_SEED_DIR:-/app/artifacts/training_seed}
+  RETRAIN_INCLUDE_TRAINING_SEED: ${RETRAIN_INCLUDE_TRAINING_SEED:-true}
+  RETRAIN_SEED_MAX_PER_CLASS: ${RETRAIN_SEED_MAX_PER_CLASS:-100}
+  RETRAIN_OUTPUT_DIR: ${RETRAIN_OUTPUT_DIR:-/app/artifacts/retrained_models}
   RETRAIN_MANIFEST_DIR: ${RETRAIN_MANIFEST_DIR:-/app/artifacts/retraining_manifests}
   RETRAINING_MANIFEST_DIR: ${RETRAINING_MANIFEST_DIR:-/app/artifacts/retraining_manifests}
+  EVALUATION_SET_DIR: ${EVALUATION_SET_DIR:-/app/artifacts/evaluation_set}
+  MODEL_PROMOTION_METRIC: ${MODEL_PROMOTION_METRIC:-f1_score}
+  MODEL_PROMOTION_MIN_DELTA: ${MODEL_PROMOTION_MIN_DELTA:-0.0}
+  MODEL_AUTO_PROMOTE: ${MODEL_AUTO_PROMOTE:-false}
   MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
   MLFLOW_UI_URL: ${MLFLOW_UI_URL:-http://localhost:5000}
   MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-chest-xray-stream-analysis}
@@ -49,7 +56,10 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./artifacts/models:/app/artifacts/models
+      - ./artifacts/training_seed:/app/artifacts/training_seed
+      - ./artifacts/retrained_models:/app/artifacts/retrained_models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/evaluation_set:/app/artifacts/evaluation_set
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,7 +90,10 @@ services:
     environment: *backend-environment
     volumes:
       - ./artifacts/models:/app/artifacts/models
+      - ./artifacts/training_seed:/app/artifacts/training_seed
+      - ./artifacts/retrained_models:/app/artifacts/retrained_models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/evaluation_set:/app/artifacts/evaluation_set
     depends_on:
       postgres:
         condition: service_healthy
@@ -182,21 +195,14 @@ services:
   mlflow:
     image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:latest}
     restart: unless-stopped
-    command:
-      - mlflow
-      - server
-      - --host
-      - 0.0.0.0
-      - --port
-      - "5000"
-      - --backend-store-uri
-      - "${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}"
-      - --default-artifact-root
-      - "${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}"
-      - --allowed-hosts
-      - "${MLFLOW_ALLOWED_HOSTS:-localhost,127.0.0.1,mlflow,mlflow:5000}"
-      - --cors-allowed-origins
-      - "${MLFLOW_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:5000,http://127.0.0.1:5000}"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}
+      --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}
+      --allowed-hosts "${MLFLOW_ALLOWED_HOSTS:-localhost,localhost:*,127.0.0.1,127.0.0.1:*,mlflow,mlflow:*,0.0.0.0,0.0.0.0:*}"
+      --cors-allowed-origins "${MLFLOW_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
     ports:
       - "${MLFLOW_PORT:-5000}:5000"
     volumes:
@@ -219,7 +225,10 @@ services:
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./artifacts/models:/app/artifacts/models
+      - ./artifacts/training_seed:/app/artifacts/training_seed
+      - ./artifacts/retrained_models:/app/artifacts/retrained_models
       - ./artifacts/retraining_manifests:/app/artifacts/retraining_manifests
+      - ./artifacts/evaluation_set:/app/artifacts/evaluation_set
     depends_on:
       redis:
         condition: service_healthy

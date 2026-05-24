@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -200,11 +201,18 @@ def test_admin_can_deactivate_user_and_doctor_cannot_manage_users(
 
     admin_response = client.patch(
         f"/api/v1/admin/users/{doctor_id}",
-        json={"is_active": False},
+        json={
+            "full_name": "Bác sĩ đã cập nhật",
+            "role": "admin",
+            "is_active": False,
+        },
         headers=_auth_header(client, "admin_demo", "admin123"),
     )
     assert admin_response.status_code == 200
-    assert admin_response.json()["is_active"] is False
+    admin_payload = admin_response.json()
+    assert admin_payload["full_name"] == "Bác sĩ đã cập nhật"
+    assert admin_payload["role"] == "admin"
+    assert admin_payload["is_active"] is False
 
     login_response = client.post(
         "/api/v1/auth/login",
@@ -234,7 +242,8 @@ def test_admin_archives_case_without_deleting_results(
         f"/api/v1/cases/{case_id}/archive",
         headers=_auth_header(client, "doctor_demo", "doctor123"),
     )
-    assert doctor_response.status_code == 403
+    assert doctor_response.status_code == 200
+    assert doctor_response.json()["archived_at"] is not None
 
     admin_response = client.post(
         f"/api/v1/cases/{case_id}/archive",
@@ -250,16 +259,93 @@ def test_admin_archives_case_without_deleting_results(
     assert list_response.status_code == 200
     assert list_response.json() == []
 
+    archived_list_response = client.get(
+        "/api/v1/cases?archive_filter=archived",
+        headers=_auth_header(client, "admin_demo", "admin123"),
+    )
+    assert archived_list_response.status_code == 200
+    assert [item["case_id"] for item in archived_list_response.json()] == [
+        str(case_id),
+    ]
+
+    restore_response = client.patch(
+        f"/api/v1/cases/{case_id}/restore",
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+    assert restore_response.status_code == 200
+    assert restore_response.json()["archived_at"] is None
+
+    my_cases_response = client.get(
+        "/api/v1/cases/my",
+        headers=_auth_header(client, "doctor_demo", "doctor123"),
+    )
+    assert my_cases_response.status_code == 200
+    assert [item["case_id"] for item in my_cases_response.json()] == [str(case_id)]
+
     with session_factory() as db:
         results_count = db.scalar(
             select(func.count())
             .select_from(AnalysisResult)
             .where(AnalysisResult.case_id == case_id)
         )
-        archived_case = db.get(XRayCase, case_id)
-        assert archived_case is not None
-        assert archived_case.archived_at is not None
+        restored_case = db.get(XRayCase, case_id)
+        assert restored_case is not None
+        assert restored_case.archived_at is None
         assert results_count == len(DEMO_LABELS)
+
+
+def test_doctor_cannot_archive_another_doctors_case(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db, active=True, version="active-v1")
+        owner = _seed_user(db, "doctor_owner", "doctor123", UserRole.USER)
+        other = _seed_user(db, "doctor_other", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=owner,
+            image_path=_image_path(tmp_path, "owned.png"),
+        )
+        case_id = case.case_id
+        assert other.is_active
+
+    response = client.post(
+        f"/api/v1/cases/{case_id}/archive",
+        headers=_auth_header(client, "doctor_other", "doctor123"),
+    )
+
+    assert response.status_code == 404
+
+
+def test_doctor_cannot_restore_another_doctors_case(
+    client_and_session_factory: tuple[TestClient, sessionmaker[Session]],
+    tmp_path: Path,
+) -> None:
+    client, session_factory = client_and_session_factory
+    with session_factory() as db:
+        model = _seed_model(db, active=True, version="active-v1")
+        owner = _seed_user(db, "doctor_owner", "doctor123", UserRole.USER)
+        other = _seed_user(db, "doctor_other", "doctor123", UserRole.USER)
+        case = _seed_case(
+            db,
+            model=model,
+            uploaded_by=owner,
+            image_path=_image_path(tmp_path, "owned.png"),
+        )
+        case.archived_at = datetime.now(timezone.utc)
+        db.commit()
+        case_id = case.case_id
+        assert other.is_active
+
+    response = client.patch(
+        f"/api/v1/cases/{case_id}/restore",
+        headers=_auth_header(client, "doctor_other", "doctor123"),
+    )
+
+    assert response.status_code == 404
 
 
 def test_admin_archives_inactive_model_but_not_active_model(

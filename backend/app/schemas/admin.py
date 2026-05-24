@@ -42,6 +42,10 @@ class AIModelResponse(AIModelBase):
 class PromoteModelResponse(BaseModel):
     promoted: bool
     reason: str
+    promotion_metric: str
+    candidate_metric: float | None = None
+    active_metric: float | None = None
+    promotion_recommended: bool
     candidate_model: AIModelResponse
     previous_active_model: AIModelResponse | None = None
     active_model: AIModelResponse
@@ -107,13 +111,19 @@ class ReviewCorrectRequest(BaseModel):
 class TrainingReadySample(BaseModel):
     review_id: UUID
     case_id: UUID
-    status: str
+    image_path: str
+    label_name: str
+    label_index: int
+    review_status: str
+    reviewed_by: UUID | None = None
+    created_at: datetime
     confirmed_labels: list[ConfirmedLabelItem]
 
 
 class RetrainingJobResponse(BaseModel):
     retraining_job_id: UUID
     status: str
+    trigger_type: str
     base_model_id: UUID
     candidate_model_id: UUID | None = None
     manifest_path: str | None = None
@@ -135,13 +145,30 @@ class RetrainingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RetrainingStartRequest(BaseModel):
+    force: bool = False
+    epochs: int | None = Field(default=None, ge=1, le=100)
+    min_samples: int | None = Field(default=None, ge=1, le=100000)
+
+
 class RetrainingSummaryResponse(BaseModel):
     min_confirmed_samples: int
     pending_reviews: int
     confirmed_reviews: int
     corrected_reviews: int
     training_ready_cases: int
+    training_seed_enabled: bool
+    training_seed_dir: str
+    training_seed_count: int
+    total_finetune_samples: int
+    finetune_per_class_count: dict[str, int]
+    missing_confirmed_samples: int
     should_trigger_retraining: bool
+    retrain_auto_start: bool
+    evaluation_set_available: bool
+    evaluation_set_sample_count: int
+    evaluation_set_dir: str
+    evaluation_warning: str | None = None
     running_job: RetrainingJobResponse | None = None
     latest_job: RetrainingJobResponse | None = None
 
@@ -153,6 +180,10 @@ class RetrainingCheckResponse(RetrainingSummaryResponse):
 class ManifestExportResponse(BaseModel):
     manifest_path: str
     samples_count: int
+    seed_count: int = 0
+    confirmed_count: int = 0
+    total_train_count: int = 0
+    per_class_count: dict[str, int] = Field(default_factory=dict)
     message: str
 
 

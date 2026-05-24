@@ -14,6 +14,10 @@ class MonitoringActiveModel(BaseModel):
     f1_score: float | None = None
     precision_score: float | None = None
     recall_score: float | None = None
+    mlflow_run_id: str | None = None
+    mlflow_model_uri: str | None = None
+    mlflow_registered_model_name: str | None = None
+    mlflow_model_version: str | None = None
     created_at: datetime
 
 

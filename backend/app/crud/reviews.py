@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.analysis_result import AnalysisResult
@@ -41,6 +41,32 @@ def list_reviews_by_status(db: Session, *, statuses: set[str]) -> list[CaseRevie
             )
         ).scalars()
     )
+
+
+def list_reviews_visible_to_user(
+    db: Session,
+    *,
+    user_id: uuid.UUID | None = None,
+) -> list[CaseReview]:
+    statement = (
+        select(CaseReview)
+        .join(XRayCase)
+        .order_by(CaseReview.created_at.desc())
+        .options(
+            selectinload(CaseReview.confirmed_labels),
+            selectinload(CaseReview.case).selectinload(XRayCase.analysis_results),
+            selectinload(CaseReview.case).selectinload(XRayCase.image),
+        )
+    )
+    if user_id is not None:
+        statement = statement.where(
+            or_(
+                CaseReview.status == "pending",
+                CaseReview.reviewed_by_id == user_id,
+                XRayCase.uploaded_by_id == user_id,
+            )
+        )
+    return list(db.execute(statement).unique().scalars())
 
 
 def create_case_review(

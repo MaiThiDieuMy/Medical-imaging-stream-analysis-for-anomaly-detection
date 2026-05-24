@@ -24,6 +24,7 @@ from app.schemas.admin import (
     PromoteModelResponse,
     RetrainingCheckResponse,
     RetrainingJobResponse,
+    RetrainingStartRequest,
     RetrainingSummaryResponse,
     ReviewConfirmRequest,
     ReviewCorrectRequest,
@@ -33,6 +34,7 @@ from app.schemas.users import UserCreate, UserResponse, UserUpdate
 from app.services.mlops import MLOpsService
 from app.services.model_admin import ModelAdminService, ModelAdminServiceError
 from app.services.retraining import RetrainingService, RetrainingServiceError
+from app.services.retraining import TrainingReadySampleInfo
 from app.services.reviews import ReviewService, ReviewServiceError
 from app.services.users import UserService, UserServiceError
 
@@ -85,13 +87,23 @@ def _review_response(review: CaseReview) -> CaseReviewResponse:
     )
 
 
-def _training_ready_sample(review: CaseReview) -> TrainingReadySample:
-    response = _review_response(review)
+def _training_ready_sample(sample: TrainingReadySampleInfo) -> TrainingReadySample:
     return TrainingReadySample(
-        review_id=response.review_id,
-        case_id=response.case_id,
-        status=response.status,
-        confirmed_labels=response.confirmed_labels,
+        review_id=sample.review_id,
+        case_id=sample.case_id,
+        image_path=sample.image_path,
+        label_name=sample.label_name,
+        label_index=sample.label_index,
+        review_status=sample.review_status,
+        reviewed_by=sample.reviewed_by,
+        created_at=sample.created_at,
+        confirmed_labels=[
+            ConfirmedLabelItem(
+                label_name=str(label["label_name"]),
+                confirmed_positive=bool(label["confirmed_positive"]),
+            )
+            for label in sample.confirmed_labels
+        ],
     )
 
 
@@ -222,23 +234,32 @@ def list_pending_reviews(
     return [_review_response(review) for review in reviews]
 
 
+@router.get("/reviews", response_model=list[CaseReviewResponse])
+def list_visible_reviews(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+) -> list[CaseReviewResponse]:
+    reviews = ReviewService(db).list_visible_reviews(current_user)
+    return [_review_response(review) for review in reviews]
+
+
 @router.get("/reviews/training-ready", response_model=list[TrainingReadySample])
 def list_training_ready_reviews(
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_admin),
 ) -> list[TrainingReadySample]:
-    reviews = ReviewService(db).list_training_ready()
-    return [_training_ready_sample(review) for review in reviews]
+    samples = RetrainingService(db).get_training_ready_sample_items()
+    return [_training_ready_sample(sample) for sample in samples]
 
 
 @router.get("/reviews/{review_id}", response_model=CaseReviewResponse)
 def get_review(
     review_id: UUID,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_doctor_or_admin),
+    current_user: User = Depends(require_doctor_or_admin),
 ) -> CaseReviewResponse:
     try:
-        review = ReviewService(db).get_review(review_id)
+        review = ReviewService(db).get_review_for_user(review_id, current_user)
     except ReviewServiceError as exc:
         raise _review_error_to_http(exc) from exc
     return _review_response(review)
@@ -257,6 +278,7 @@ def confirm_review(
             review_id,
             note=payload.note,
             reviewed_by=current_user.user_id,
+            user=current_user,
         )
     except ReviewServiceError as exc:
         raise _review_error_to_http(exc) from exc
@@ -280,6 +302,7 @@ def correct_review(
             labels=labels,
             note=payload.note,
             reviewed_by=current_user.user_id,
+            user=current_user,
         )
     except ReviewServiceError as exc:
         raise _review_error_to_http(exc) from exc
@@ -300,8 +323,8 @@ def get_retraining_samples(
     _current_user: User = Depends(require_admin),
 ) -> list[TrainingReadySample]:
     return [
-        _training_ready_sample(review)
-        for review in MLOpsService(db).training_ready_samples()
+        _training_ready_sample(sample)
+        for sample in MLOpsService(db).training_ready_samples()
     ]
 
 
@@ -339,6 +362,46 @@ def get_retraining_job(
         raise _retraining_error_to_http(exc) from exc
 
 
+def _start_retraining_job(
+    *,
+    payload: RetrainingStartRequest,
+    db: Session,
+    current_user: User,
+) -> RetrainingJobResponse:
+    service = RetrainingService(db)
+    job = service.create_retraining_job(
+        force=payload.force,
+        min_samples=payload.min_samples,
+        triggered_by=current_user.user_id,
+    )
+    from app.tasks.retraining import fine_tune_model
+
+    if payload.epochs is None:
+        fine_tune_model.delay(str(job.retraining_job_id))
+    else:
+        fine_tune_model.delay(str(job.retraining_job_id), epochs=payload.epochs)
+    return RetrainingJobResponse.model_validate(job, from_attributes=True)
+
+
+@router.post(
+    "/mlops/retraining/start",
+    response_model=RetrainingJobResponse,
+)
+def start_retraining(
+    response: Response,
+    payload: RetrainingStartRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+) -> RetrainingJobResponse:
+    payload = payload or RetrainingStartRequest()
+    try:
+        result = _start_retraining_job(payload=payload, db=db, current_user=current_user)
+    except RetrainingServiceError as exc:
+        raise _retraining_error_to_http(exc) from exc
+    response.status_code = 202
+    return result
+
+
 @router.post(
     "/mlops/retraining/trigger",
     response_model=RetrainingJobResponse,
@@ -348,16 +411,12 @@ def trigger_retraining(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> RetrainingJobResponse:
-    try:
-        service = RetrainingService(db)
-        job = service.create_retraining_job(triggered_by=current_user.user_id)
-        from app.tasks.retraining import fine_tune_model
-
-        fine_tune_model.delay(str(job.retraining_job_id))
-    except RetrainingServiceError as exc:
-        raise _retraining_error_to_http(exc) from exc
-    response.status_code = 202
-    return job
+    return start_retraining(
+        payload=RetrainingStartRequest(),
+        response=response,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.post(

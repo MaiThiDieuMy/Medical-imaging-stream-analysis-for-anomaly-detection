@@ -335,6 +335,40 @@ def test_promote_if_better_activates_candidate(db_session: Session) -> None:
 
     db_session.refresh(active)
     assert response.promoted is True
+    assert response.promotion_metric == "f1_score"
+    assert response.candidate_metric == 0.75
+    assert response.active_metric == 0.60
+    assert response.promotion_recommended is True
     assert response.active_model.model_id == candidate.model_id
     assert active.is_active is False
     assert service.get_active_model().model_id == candidate.model_id
+
+
+def test_promotion_gate_respects_min_delta(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "model_promotion_metric", "f1_score")
+    monkeypatch.setattr(settings, "model_promotion_min_delta", 0.05)
+    _create_model(db_session, version="v1", active=True, f1_score=0.80)
+    service = ModelAdminService(db_session)
+    candidate = service.register_candidate(
+        CandidateModelCreate(
+            model_name="demo-chest-xray",
+            version="v3",
+            model_path="demo://v3",
+            accuracy=0.82,
+            precision_score=0.82,
+            recall_score=0.82,
+            f1_score=0.83,
+        )
+    )
+
+    response = service.promote_if_better(candidate.model_id)
+
+    assert response.promoted is False
+    assert response.promotion_metric == "f1_score"
+    assert response.candidate_metric == 0.83
+    assert response.active_metric == 0.80
+    assert response.promotion_recommended is False
+    assert service.get_active_model().version == "v1"

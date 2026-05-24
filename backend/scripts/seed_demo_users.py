@@ -18,13 +18,13 @@ DEMO_USERS = [
     {
         "username": "admin_demo",
         "password": "admin123",
-        "full_name": "Demo Admin",
+        "full_name": "Quản trị viên hệ thống",
         "role": UserRole.ADMIN,
     },
     {
         "username": "doctor_demo",
         "password": "doctor123",
-        "full_name": "Demo Doctor",
+        "full_name": "Bác sĩ Nguyễn Văn A",
         "role": UserRole.USER,
     },
 ]

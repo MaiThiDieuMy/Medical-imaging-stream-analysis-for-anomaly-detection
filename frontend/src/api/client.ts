@@ -2,6 +2,7 @@ import type {
   AIModel,
   AnalyzeFormValues,
   AnalyzeResponse,
+  ArchiveFilter,
   CaseDetailResponse,
   CaseListItem,
   CaseResultsResponse,
@@ -21,6 +22,7 @@ import type {
   PromoteModelResponse,
   RetrainingCheckResponse,
   RetrainingJob,
+  RetrainingStartPayload,
   RetrainingSummary,
   TrainingReadySample,
   UserPayload,
@@ -209,10 +211,11 @@ export function getCaseReviewStatus(
 
 export function confirmCaseResult(
   caseId: string,
+  note?: string,
 ): Promise<CaseReviewStatusResponse> {
   return requestJson<CaseReviewStatusResponse>(`/cases/${caseId}/confirm-result`, {
     method: "POST",
-    body: {},
+    body: { note },
   });
 }
 
@@ -227,12 +230,20 @@ export function correctCaseLabels(
   });
 }
 
-export function listCases(): Promise<CaseListItem[]> {
-  return requestJson<CaseListItem[]>("/cases");
+function withArchiveFilter(path: string, archiveFilter: ArchiveFilter = "active"): string {
+  return `${path}?archive_filter=${encodeURIComponent(archiveFilter)}`;
 }
 
-export function listMyCases(): Promise<CaseListItem[]> {
-  return requestJson<CaseListItem[]>("/cases/my");
+export function listCases(
+  archiveFilter: ArchiveFilter = "active",
+): Promise<CaseListItem[]> {
+  return requestJson<CaseListItem[]>(withArchiveFilter("/cases", archiveFilter));
+}
+
+export function listMyCases(
+  archiveFilter: ArchiveFilter = "active",
+): Promise<CaseListItem[]> {
+  return requestJson<CaseListItem[]>(withArchiveFilter("/cases/my", archiveFilter));
 }
 
 export function getCaseDetail(caseId: string): Promise<CaseDetailResponse> {
@@ -250,6 +261,12 @@ export function getCaseReportHtml(caseId: string): Promise<string> {
 export function archiveCase(caseId: string): Promise<CaseDetailResponse> {
   return requestJson<CaseDetailResponse>(`/cases/${caseId}/archive`, {
     method: "POST",
+  });
+}
+
+export function restoreCase(caseId: string): Promise<CaseDetailResponse> {
+  return requestJson<CaseDetailResponse>(`/cases/${caseId}/restore`, {
+    method: "PATCH",
   });
 }
 
@@ -318,24 +335,29 @@ export function listPendingReviews(): Promise<CaseReview[]> {
   return requestJson<CaseReview[]>("/admin/reviews/pending");
 }
 
+export function listReviews(): Promise<CaseReview[]> {
+  return requestJson<CaseReview[]>("/admin/reviews");
+}
+
 export function getReview(reviewId: string): Promise<CaseReview> {
   return requestJson<CaseReview>(`/admin/reviews/${reviewId}`);
 }
 
-export function confirmReview(reviewId: string): Promise<CaseReview> {
+export function confirmReview(reviewId: string, note?: string): Promise<CaseReview> {
   return requestJson<CaseReview>(`/admin/reviews/${reviewId}/confirm`, {
     method: "POST",
-    body: {},
+    body: { note },
   });
 }
 
 export function correctReview(
   reviewId: string,
   labels: LabelCorrection[],
+  note?: string,
 ): Promise<CaseReview> {
   return requestJson<CaseReview>(`/admin/reviews/${reviewId}/correct`, {
     method: "POST",
-    body: { labels },
+    body: { labels, note },
   });
 }
 
@@ -357,10 +379,12 @@ export function listRetrainingJobs(): Promise<RetrainingJob[]> {
   return requestJson<RetrainingJob[]>("/admin/mlops/retraining/jobs");
 }
 
-export function triggerRetraining(): Promise<RetrainingJob> {
-  return requestJson<RetrainingJob>("/admin/mlops/retraining/trigger", {
+export function startRetraining(
+  payload: RetrainingStartPayload = {},
+): Promise<RetrainingJob> {
+  return requestJson<RetrainingJob>("/admin/mlops/retraining/start", {
     method: "POST",
-    body: {},
+    body: payload,
   });
 }
 

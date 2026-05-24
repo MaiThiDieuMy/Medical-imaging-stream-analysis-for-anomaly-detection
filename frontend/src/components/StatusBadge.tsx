@@ -1,3 +1,5 @@
+import { formatStatusLabel } from "../utils/format";
+
 type StatusBadgeProps = {
   value: string | boolean | null | undefined;
 };
@@ -10,10 +12,12 @@ export function StatusBadge({ value }: StatusBadgeProps) {
     normalized === "active" ||
     normalized === "connected" ||
     normalized === "ok" ||
+    normalized === "clear" ||
     normalized === "positive" ||
     normalized === "true" ||
     normalized === "confirmed" ||
-    normalized === "corrected"
+    normalized === "corrected" ||
+    normalized === "dự đoán chính"
       ? "positive"
       : normalized === "failed" ||
           normalized === "false" ||
@@ -25,9 +29,10 @@ export function StatusBadge({ value }: StatusBadgeProps) {
         : normalized === "pending" ||
             normalized === "queued" ||
             normalized === "processing" ||
-            normalized === "draft"
+            normalized === "draft" ||
+            normalized === "archived"
           ? "warning"
           : "neutral";
 
-  return <span className={`status-badge ${tone}`}>{String(label)}</span>;
+  return <span className={`status-badge ${tone}`}>{formatStatusLabel(value)}</span>;
 }

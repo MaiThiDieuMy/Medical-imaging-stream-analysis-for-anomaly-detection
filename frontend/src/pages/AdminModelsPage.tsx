@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   activateModel,
-  archiveModel,
   getActiveModel,
   listMlflowModels,
   listModels,
@@ -60,7 +59,7 @@ export function AdminModelsPage() {
       setLoading(true);
       await registerCandidate(modelPayloadFromForm(event.currentTarget));
       event.currentTarget.reset();
-      setMessage("Đã đăng ký candidate model trong cơ sở dữ liệu.");
+      setMessage("Đã đăng ký model ứng viên trong cơ sở dữ liệu.");
       await refreshModels();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không đăng ký được model.");
@@ -116,28 +115,7 @@ export function AdminModelsPage() {
       setPromotion(result);
       await refreshModels();
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Không promote được mô hình.");
-    }
-  }
-
-  async function handleArchive(modelId: string) {
-    if (
-      !window.confirm(
-        "Ẩn model này khỏi danh sách sử dụng? File weights và lịch sử inference vẫn được giữ.",
-      )
-    ) {
-      return;
-    }
-    setError(null);
-    setMessage(null);
-    setPromotion(null);
-    setMlflowRegistration(null);
-    try {
-      await archiveModel(modelId);
-      setMessage("Đã ẩn model. Historical results vẫn giữ nguyên model version cũ.");
-      await refreshModels();
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Không ẩn được model.");
+      setError(exc instanceof Error ? exc.message : "Không chọn được mô hình.");
     }
   }
 
@@ -147,8 +125,8 @@ export function AdminModelsPage() {
         <div>
           <h2>Mô hình AI</h2>
           <p>
-            Quản lý active model, candidate model và liên kết MLflow. Thay đổi
-            active model chỉ ảnh hưởng các ca inference mới.
+            Quản lý model đang hoạt động, model ứng viên và liên kết MLflow.
+            Thay đổi model đang hoạt động chỉ ảnh hưởng các ca inference mới.
           </p>
         </div>
         <div className="actions">
@@ -168,8 +146,8 @@ export function AdminModelsPage() {
       {message && <Message tone="success">{message}</Message>}
       {promotion && (
         <Message tone={promotion.promoted ? "success" : "warning"}>
-          {promotion.promoted ? "Đã promote model." : "Chưa promote model."}{" "}
-          {promotion.reason} Active model: {promotion.active_model.model_name}:
+          {promotion.promoted ? "Đã chọn model mới." : "Chưa chọn model mới."}{" "}
+          {promotion.reason} Model đang hoạt động: {promotion.active_model.model_name}:
           {promotion.active_model.version}
         </Message>
       )}
@@ -186,7 +164,7 @@ export function AdminModelsPage() {
         <div className="panel">
           <div className="section-heading">
             <div>
-              <h3>Active model</h3>
+              <h3>Model đang hoạt động</h3>
               <p className="muted">Model đang dùng cho các ca inference mới.</p>
             </div>
             <StatusBadge value={activeModel ? "active" : "missing"} />
@@ -195,15 +173,15 @@ export function AdminModelsPage() {
             <>
               <dl className="detail-list">
                 <div>
-                  <dt>Name</dt>
+                  <dt>Tên model</dt>
                   <dd>{activeModel.model_name}</dd>
                 </div>
                 <div>
-                  <dt>Version</dt>
+                  <dt>Phiên bản</dt>
                   <dd>{activeModel.version}</dd>
                 </div>
                 <div>
-                  <dt>Model ID</dt>
+                  <dt>Mã model</dt>
                   <dd title={activeModel.model_id}>{compactId(activeModel.model_id)}</dd>
                 </div>
                 <div>
@@ -213,7 +191,7 @@ export function AdminModelsPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt>Registry version</dt>
+                  <dt>Phiên bản registry</dt>
                   <dd>{activeModel.mlflow_model_version ?? "-"}</dd>
                 </div>
               </dl>
@@ -228,7 +206,7 @@ export function AdminModelsPage() {
             </>
           ) : (
             <div className="empty-state compact">
-              <strong>Chưa có active model</strong>
+              <strong>Chưa có model đang hoạt động</strong>
               <p>Seed demo model hoặc kích hoạt một candidate model trước khi phân tích ảnh.</p>
             </div>
           )}
@@ -245,7 +223,7 @@ export function AdminModelsPage() {
           {mlflowModels ? (
             <dl className="detail-list">
               <div>
-                <dt>Registered Model</dt>
+                <dt>Model đã đăng ký</dt>
                 <dd>{mlflowModels.registered_model_name}</dd>
               </div>
               <div>
@@ -253,7 +231,7 @@ export function AdminModelsPage() {
                 <dd>{mlflowModels.mlflow_tracking_uri}</dd>
               </div>
               <div>
-                <dt>Versions</dt>
+                <dt>Số phiên bản</dt>
                 <dd>{mlflowModels.versions.length}</dd>
               </div>
             </dl>
@@ -276,15 +254,15 @@ export function AdminModelsPage() {
             </div>
           </div>
           <label>
-            Model name
+            Tên model
             <input defaultValue="chest-xray-mobilenetv3-small" name="model_name" required />
           </label>
           <label>
-            Version
+            Phiên bản
             <input defaultValue="kaggle-best-v1" maxLength={20} name="version" required />
           </label>
           <label className="span-2">
-            Model path
+            Đường dẫn model
             <input
               defaultValue="/app/artifacts/models/best_model.pth"
               name="model_path"
@@ -292,11 +270,11 @@ export function AdminModelsPage() {
             />
           </label>
           <label>
-            Architecture
+            Kiến trúc
             <input defaultValue="mobilenet_v3_small" name="architecture" required />
           </label>
           <label>
-            Task type
+            Loại tác vụ
             <input defaultValue="multi_class" disabled />
           </label>
           <MetricInputs />
@@ -309,25 +287,25 @@ export function AdminModelsPage() {
           <div className="form-section span-2">
             <span className="step-badge">2</span>
             <div>
-              <h3>Đăng ký candidate metadata</h3>
-              <p className="muted">Tạo candidate model trong database khi đã có checkpoint sẵn.</p>
+              <h3>Đăng ký metadata model ứng viên</h3>
+              <p className="muted">Tạo model ứng viên trong database khi đã có checkpoint sẵn.</p>
             </div>
           </div>
           <label>
-            Model name
+            Tên model
             <input name="model_name" required />
           </label>
           <label>
-            Version
+            Phiên bản
             <input maxLength={20} name="version" required />
           </label>
           <label className="span-2">
-            Model path
+            Đường dẫn model
             <input name="model_path" required />
           </label>
           <MetricInputs />
           <button className="primary span-2" disabled={loading} type="submit">
-            {loading ? "Đang lưu..." : "Đăng ký candidate"}
+            {loading ? "Đang lưu..." : "Đăng ký model ứng viên"}
           </button>
         </form>
       </div>
@@ -337,20 +315,20 @@ export function AdminModelsPage() {
           <div>
             <h3>Model Registry trong app</h3>
             <p className="muted">
-              Kích hoạt hoặc promote model chỉ ảnh hưởng các inference mới.
+              Kích hoạt hoặc chọn model tốt hơn chỉ ảnh hưởng các inference mới.
             </p>
           </div>
-          <span className="count-pill">{models.length} models</span>
+          <span className="count-pill">{models.length} model</span>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Model</th>
-                <th>Version</th>
+                <th>Phiên bản</th>
                 <th>F1</th>
                 <th>MLflow</th>
-                <th>Status</th>
+                <th>Trạng thái</th>
                 <th>Hành động</th>
               </tr>
             </thead>
@@ -403,22 +381,14 @@ export function AdminModelsPage() {
                       onClick={() => void handlePromote(model.model_id)}
                       type="button"
                     >
-                      Promote
-                    </button>
-                    <button
-                      className="danger"
-                      disabled={model.is_active || Boolean(model.archived_at)}
-                      onClick={() => void handleArchive(model.model_id)}
-                      type="button"
-                    >
-                      Ẩn model
+                      Chọn nếu tốt hơn
                     </button>
                   </td>
                 </tr>
               ))}
               {models.length === 0 && (
                 <tr>
-                  <td colSpan={6}>Chưa có model metadata.</td>
+                  <td colSpan={6}>Chưa có metadata model.</td>
                 </tr>
               )}
             </tbody>

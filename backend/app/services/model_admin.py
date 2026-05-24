@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 import logging
 import uuid
 
@@ -37,6 +38,21 @@ from app.schemas.admin import (
 )
 
 logger = logging.getLogger(__name__)
+PROMOTION_METRICS = {
+    "accuracy",
+    "precision_score",
+    "recall_score",
+    "f1_score",
+}
+
+
+@dataclass(frozen=True)
+class PromotionDecision:
+    recommended: bool
+    reason: str
+    metric_name: str
+    candidate_metric: float | None
+    active_metric: float | None
 
 
 class ModelAdminServiceError(Exception):
@@ -284,16 +300,23 @@ class ModelAdminService:
         active = get_active_model(self.db)
 
         if candidate.is_active:
+            metric_name = self._promotion_metric_name()
+            candidate_metric = self._metric_value(candidate, metric_name)
+            active_metric = self._metric_value(active, metric_name)
             return PromoteModelResponse(
                 promoted=False,
-                reason="Candidate model is already active",
+                reason="Model ứng viên đã là model hoạt động.",
+                promotion_metric=metric_name,
+                candidate_metric=candidate_metric,
+                active_metric=active_metric,
+                promotion_recommended=False,
                 candidate_model=candidate,
                 previous_active_model=active,
                 active_model=candidate,
             )
 
-        should_promote, reason = self._should_promote(candidate, active)
-        if should_promote:
+        decision = self._promotion_decision(candidate, active)
+        if decision.recommended:
             previous_active = active
             activate_model(self.db, model=candidate)
             self.db.commit()
@@ -302,11 +325,15 @@ class ModelAdminService:
                 "Promoted candidate model: model_id=%s version=%s reason=%s",
                 candidate.model_id,
                 candidate.version,
-                reason,
+                decision.reason,
             )
             return PromoteModelResponse(
                 promoted=True,
-                reason=reason,
+                reason=decision.reason,
+                promotion_metric=decision.metric_name,
+                candidate_metric=decision.candidate_metric,
+                active_metric=decision.active_metric,
+                promotion_recommended=True,
                 candidate_model=candidate,
                 previous_active_model=previous_active,
                 active_model=candidate,
@@ -322,11 +349,15 @@ class ModelAdminService:
             "Candidate model not promoted: model_id=%s version=%s reason=%s",
             candidate.model_id,
             candidate.version,
-            reason,
+            decision.reason,
         )
         return PromoteModelResponse(
             promoted=False,
-            reason=reason,
+            reason=decision.reason,
+            promotion_metric=decision.metric_name,
+            candidate_metric=decision.candidate_metric,
+            active_metric=decision.active_metric,
+            promotion_recommended=False,
             candidate_model=candidate,
             previous_active_model=active,
             active_model=active,
@@ -363,17 +394,79 @@ class ModelAdminService:
                 status_code=409,
             )
 
-    @staticmethod
-    def _should_promote(
+    def _promotion_decision(
+        self,
         candidate: AIModel,
         active: AIModel | None,
-    ) -> tuple[bool, str]:
+    ) -> PromotionDecision:
+        metric_name = self._promotion_metric_name()
+        candidate_metric = self._metric_value(candidate, metric_name)
+        active_metric = self._metric_value(active, metric_name)
+
         if active is None:
-            return True, "No active model exists"
-        if active.f1_score is None:
-            return True, "Active model has no f1_score metric"
-        if candidate.f1_score is None:
-            return False, "Candidate model has no f1_score metric"
-        if candidate.f1_score >= active.f1_score:
-            return True, "Candidate f1_score is greater than or equal to active model"
-        return False, "Candidate f1_score is lower than active model"
+            return PromotionDecision(
+                recommended=True,
+                reason="Chưa có model hoạt động; admin có thể chọn model ứng viên.",
+                metric_name=metric_name,
+                candidate_metric=candidate_metric,
+                active_metric=None,
+            )
+        if active_metric is None:
+            return PromotionDecision(
+                recommended=False,
+                reason=(
+                    f"Model đang hoạt động chưa có {metric_name}; cần admin xem lại."
+                ),
+                metric_name=metric_name,
+                candidate_metric=candidate_metric,
+                active_metric=None,
+            )
+        if candidate_metric is None:
+            return PromotionDecision(
+                recommended=False,
+                reason=f"Model ứng viên chưa có {metric_name}.",
+                metric_name=metric_name,
+                candidate_metric=None,
+                active_metric=active_metric,
+            )
+
+        threshold = active_metric + settings.model_promotion_min_delta
+        if candidate_metric >= threshold:
+            return PromotionDecision(
+                recommended=True,
+                reason=(
+                    f"Model ứng viên có {metric_name} lớn hơn hoặc bằng "
+                    f"model đang hoạt động cộng ngưỡng delta tối thiểu."
+                ),
+                metric_name=metric_name,
+                candidate_metric=candidate_metric,
+                active_metric=active_metric,
+            )
+        return PromotionDecision(
+            recommended=False,
+            reason=(
+                f"Model ứng viên có {metric_name} thấp hơn model đang hoạt động "
+                f"cộng ngưỡng delta tối thiểu."
+            ),
+            metric_name=metric_name,
+            candidate_metric=candidate_metric,
+            active_metric=active_metric,
+        )
+
+    @staticmethod
+    def _promotion_metric_name() -> str:
+        metric_name = settings.model_promotion_metric
+        if metric_name not in PROMOTION_METRICS:
+            raise ModelAdminServiceError(
+                "MODEL_PROMOTION_METRIC must be one of: "
+                + ", ".join(sorted(PROMOTION_METRICS)),
+                status_code=500,
+            )
+        return metric_name
+
+    @staticmethod
+    def _metric_value(model: AIModel | None, metric_name: str) -> float | None:
+        if model is None:
+            return None
+        value = getattr(model, metric_name, None)
+        return float(value) if value is not None else None

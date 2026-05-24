@@ -19,6 +19,12 @@ class RetrainingJob(Base):
         default=uuid.uuid4,
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    trigger_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="manual",
+        server_default="manual",
+    )
     base_model_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("ai_models.model_id", ondelete="RESTRICT"),

@@ -27,6 +27,20 @@ Open:
 
 The backend is an API server, not the frontend UI. Use the frontend URL for the hospital workflow and Swagger for direct API checks.
 
+MLflow UI opens in the browser at `http://localhost:5000`. Backend and Celery keep using the internal Docker URL `MLFLOW_TRACKING_URI=http://mlflow:5000`. If MLflow shows `Invalid Host header - possible DNS rebinding attack detected`, add the browser host/IP/domain to `MLFLOW_ALLOWED_HOSTS` in `.env`, then restart only MLflow:
+
+```bash
+docker compose up -d --build mlflow
+```
+
+Local demo value:
+
+```env
+MLFLOW_ALLOWED_HOSTS=localhost,localhost:*,127.0.0.1,127.0.0.1:*,mlflow,mlflow:*,0.0.0.0,0.0.0.0:*
+```
+
+For LAN or domain access, append entries such as `192.168.1.10,192.168.1.10:*` or `mlflow.example.com,mlflow.example.com:*`. Avoid a global `*` wildcard in production because it weakens MLflow host-header protection.
+
 Development/demo credentials:
 
 - Doctor/KTV: `doctor_demo` / `doctor123`
@@ -104,6 +118,59 @@ What to say:
 6. Export retraining manifest and explain that only confirmed/corrected labels with stored confirmation evidence are included.
 7. Trigger retraining only after the configured confirmed-sample threshold is reached.
 
+Threshold `N` is configured with `RETRAIN_MIN_CONFIRMED_SAMPLES` in `.env`.
+`N` counts only new DB cases confirmed/corrected by doctor/admin. Local
+`training_seed` images are used to support fine-tuning, but they do not count
+toward `N`.
+For pipeline testing, set `RETRAIN_MIN_CONFIRMED_SAMPLES=1`, restart backend and
+Celery, confirm one completed case, then start fine-tuning from the Admin MLOps page
+or with:
+
+```bash
+docker compose exec backend python scripts/retraining_smoke_test.py
+docker compose exec backend python scripts/retraining_smoke_test.py --start
+docker compose exec backend python scripts/inspect_training_data.py
+```
+
+Use `N=2`, `N=5`, or `N=10` for progressively larger demos. To test auto job
+creation, set `RETRAIN_AUTO_START=true`, restart `backend` and `celery_worker`,
+then confirm/correct enough completed cases. Very small values are for pipeline
+validation only, not clinically meaningful training. Retrained checkpoints are saved
+under `artifacts/retrained_models/`, ignored by Git, and logged to MLflow at
+http://localhost:5000. Admin must review the inactive candidate model before activating
+or promoting it.
+
+Local training seed:
+
+```text
+artifacts/training_seed/Atelectasis/
+artifacts/training_seed/Effusion/
+artifacts/training_seed/Infiltration/
+artifacts/training_seed/No_Finding/
+```
+
+Fixed evaluation set:
+
+```text
+artifacts/evaluation_set/Atelectasis/
+artifacts/evaluation_set/Effusion/
+artifacts/evaluation_set/Infiltration/
+artifacts/evaluation_set/No_Finding/
+```
+
+Recommended local counts:
+
+- Pipeline test: 5-10 images/class seed, 5 images/class eval.
+- Demo: 50-100 images/class seed, 20-50 images/class eval.
+- Stronger evaluation: 200+ images/class seed, 100+ images/class eval.
+
+Do not commit seed or evaluation images. If the evaluation folder is missing or empty, the system
+falls back to a validation split only to validate the pipeline and shows a warning.
+MLflow logs `evaluation_source` so the demo can distinguish fixed evaluation from
+pipeline-only fallback evaluation.
+`MODEL_AUTO_PROMOTE=false` by default, so retrained models remain inactive
+candidates until Admin explicitly promotes them.
+
 What to say:
 
 > AI predictions are not used as training labels until a doctor/admin confirms or corrects them, regardless of confidence.
@@ -162,6 +229,7 @@ Mention these limitations clearly:
 - Uploaded images are stored in MinIO using stable object keys.
 - Case report export is HTML suitable for browser print/save-as-PDF.
 - DICOM is not supported yet.
-- MLflow registration logs checkpoint artifacts; it does not retrain the model.
+- Manual MLflow registration only logs an existing checkpoint; the retraining task is the path that fine-tunes and logs a new candidate checkpoint.
 - Retraining only uses cases with stored confirmation evidence in `confirmed_labels`; raw AI predictions are excluded even when high-confidence.
+- Evidently AI is a future option for drift/performance monitoring after ground truth is available. It does not replace MLflow runs, fixed evaluation metrics, or the promotion gate.
 - Do not commit real patient data, sample images, model weights, or `.env`.

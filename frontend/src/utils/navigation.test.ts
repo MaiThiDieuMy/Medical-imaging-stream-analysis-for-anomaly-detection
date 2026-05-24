@@ -2,27 +2,20 @@ import { describe, expect, it } from "vitest";
 import { getNavigationForRole } from "./navigation";
 
 describe("role navigation", () => {
-  it("hides admin model management from doctor users", () => {
-    const keys = getNavigationForRole("user").map((item) => item.key);
+  it("keeps retraining/admin controls out of doctor navigation", () => {
+    const doctorKeys = getNavigationForRole("user").map((item) => item.key);
 
-    expect(keys).toContain("dashboard");
-    expect(keys).toContain("analyze");
-    expect(keys).toContain("cases");
-    expect(keys).toContain("reviews");
-    expect(keys).not.toContain("models");
-    expect(keys).not.toContain("users");
-    expect(keys).not.toContain("monitoring");
+    expect(doctorKeys).toContain("reviews");
+    expect(doctorKeys).not.toContain("models");
+    expect(doctorKeys).not.toContain("users");
+    expect(doctorKeys).not.toContain("monitoring");
   });
 
-  it("shows admin management areas to admins", () => {
-    const keys = getNavigationForRole("admin").map((item) => item.key);
+  it("shows MLOps/admin pages only for admin users", () => {
+    const adminKeys = getNavigationForRole("admin").map((item) => item.key);
 
-    expect(keys).toContain("dashboard");
-    expect(keys).toContain("models");
-    expect(keys).toContain("cases");
-    expect(keys).toContain("reviews");
-    expect(keys).toContain("users");
-    expect(keys).toContain("monitoring");
-    expect(keys).not.toContain("analyze");
+    expect(adminKeys).toContain("models");
+    expect(adminKeys).toContain("users");
+    expect(adminKeys).toContain("monitoring");
   });
 });

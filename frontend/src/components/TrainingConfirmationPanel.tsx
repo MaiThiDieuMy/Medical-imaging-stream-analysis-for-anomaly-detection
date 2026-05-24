@@ -31,6 +31,7 @@ export function TrainingConfirmationPanel({
   const [reviewStatus, setReviewStatus] =
     useState<CaseReviewStatusResponse | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>(demoLabels[0]);
+  const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,10 +44,17 @@ export function TrainingConfirmationPanel({
     () => results.find((result) => result.predicted_positive)?.label_name,
     [results],
   );
+  const confirmedLabel = useMemo(
+    () =>
+      reviewStatus?.confirmed_labels.find((label) => label.confirmed_positive)
+        ?.label_name ?? null,
+    [reviewStatus],
+  );
 
   useEffect(() => {
-    setSelectedLabel(predictedLabel ?? demoLabels[0]);
-  }, [predictedLabel]);
+    setSelectedLabel(confirmedLabel ?? predictedLabel ?? demoLabels[0]);
+    setNote(reviewStatus?.note ?? "");
+  }, [confirmedLabel, predictedLabel, reviewStatus?.note]);
 
   useEffect(() => {
     if (!completed || !caseId) {
@@ -79,11 +87,9 @@ export function TrainingConfirmationPanel({
     setMessage(null);
     try {
       setLoading(true);
-      const status = await confirmCaseResult(caseId);
+      const status = await confirmCaseResult(caseId, note);
       setReviewStatus(status);
-      setMessage(
-        "Đã xác nhận kết quả AI là đúng. Ca này được đưa vào dữ liệu training-ready.",
-      );
+      setMessage("Đã lưu xác nhận AI đúng cho ca này.");
       onUpdated?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không xác nhận được kết quả.");
@@ -101,11 +107,9 @@ export function TrainingConfirmationPanel({
         label_name: label,
         confirmed_positive: label === selectedLabel,
       }));
-      const status = await correctCaseLabels(caseId, labels);
+      const status = await correctCaseLabels(caseId, labels, note);
       setReviewStatus(status);
-      setMessage(
-        "Đã lưu nhãn bác sĩ chọn. Ca này được đưa vào dữ liệu training-ready.",
-      );
+      setMessage("Đã lưu nhãn bác sĩ chọn cho ca này.");
       onUpdated?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Không lưu được nhãn đã sửa.");
@@ -117,7 +121,8 @@ export function TrainingConfirmationPanel({
   if (!completed) {
     return (
       <Message>
-        Ca chưa hoàn tất inference nên chưa thể xác nhận nhãn cho retraining.
+        Ca chưa hoàn tất inference nên chưa thể xác nhận nhãn cho dữ liệu huấn
+        luyện.
       </Message>
     );
   }
@@ -126,10 +131,10 @@ export function TrainingConfirmationPanel({
     <div className="clinical-review-box">
       <div className="section-heading">
         <div>
-          <h4>Xác nhận dữ liệu huấn luyện</h4>
+          <h4>Xác nhận nhãn sau phân tích</h4>
           <p className="muted">
-            Chỉ xác nhận khi bác sĩ/KTV đã xem kết quả. Dữ liệu đã xác nhận mới
-            được tính cho retraining.
+            Chỉ xác nhận khi bác sĩ/KTV đã xem kết quả. Chỉ các ca đã được bác
+            sĩ xác nhận hoặc gán nhãn lại mới được dùng cho dữ liệu huấn luyện.
           </p>
         </div>
         <StatusBadge value={reviewStatus?.status ?? "chưa xác nhận"} />
@@ -139,60 +144,65 @@ export function TrainingConfirmationPanel({
       {message && <Message tone="success">{message}</Message>}
 
       {trainingReady ? (
-        <div>
-          <Message tone="success">
-            Ca {compactId(caseId)} đã có nhãn xác nhận và được tính vào
-            retraining buffer.
-          </Message>
-          <div className="toggle-grid">
-            {reviewStatus?.confirmed_labels.map((label) => (
-              <div className="toggle-row" key={label.label_name}>
-                <strong>{label.label_name}</strong>
-                <StatusBadge value={label.confirmed_positive} />
-              </div>
-            ))}
-          </div>
-        </div>
+        <Message tone="success">
+          {reviewStatus?.status === "corrected"
+            ? "Nhãn đã gán lại"
+            : "Nhãn AI đã được xác nhận"}
+          : <strong>{confirmedLabel ?? "-"}</strong>. Bác sĩ/KTV có thể cập nhật lại
+          nhãn và ghi chú chuyên môn nếu cần chỉnh sửa cho ca {compactId(caseId)}.
+        </Message>
       ) : (
-        <>
-          <Message tone="warning">
-            Kết quả AI thô chưa phải dữ liệu huấn luyện. Chọn một trong hai hành
-            động bên dưới sau khi đã đối chiếu ảnh và kết quả.
-          </Message>
-          <div className="decision-actions">
-            <button
-              className="primary"
-              disabled={loading}
-              onClick={() => void handleConfirm()}
-              type="button"
-            >
-              Xác nhận AI đúng
-            </button>
-            <span className="action-note">
-              Dùng khi toàn bộ nhãn AI phù hợp với đánh giá của bác sĩ.
-            </span>
-          </div>
-          <div className="correction-box">
-            <h4>Hoặc chọn nhãn đúng để sửa</h4>
-            <div className="toggle-grid">
-              {demoLabels.map((label) => (
-                <label className="toggle-row" key={label}>
-                  <input
-                    checked={selectedLabel === label}
-                    name={`case-${caseId}-correct-label`}
-                    onChange={() => setSelectedLabel(label)}
-                    type="radio"
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-            <button disabled={loading} onClick={() => void handleCorrect()} type="button">
-              Lưu nhãn bác sĩ chọn
-            </button>
-          </div>
-        </>
+        <Message tone="warning">
+          Kết quả AI thô chưa phải dữ liệu huấn luyện. Chọn một trong hai hành
+          động bên dưới sau khi đã đối chiếu ảnh và kết quả.
+        </Message>
       )}
+
+      <label className="note-field">
+        Ghi chú chuyên môn
+        <textarea
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Nhập ghi chú lâm sàng ngắn nếu cần"
+          rows={2}
+          value={note}
+        />
+      </label>
+
+      <div className="decision-actions">
+        <button
+          className="primary"
+          disabled={loading}
+          onClick={() => void handleConfirm()}
+          type="button"
+        >
+          {trainingReady ? "Cập nhật xác nhận" : "Xác nhận AI đúng"}
+        </button>
+        <span className="action-note">
+          Dùng khi nhãn AI phù hợp với đánh giá của bác sĩ sau khi xem ảnh.
+        </span>
+      </div>
+
+      <div className="correction-box">
+        <h4>
+          {trainingReady ? "Chỉnh sửa nhãn xác nhận" : "Gán nhãn lại"}
+        </h4>
+        <div className="toggle-grid">
+          {demoLabels.map((label) => (
+            <label className="toggle-row" key={label}>
+              <input
+                checked={selectedLabel === label}
+                name={`case-${caseId}-correct-label`}
+                onChange={() => setSelectedLabel(label)}
+                type="radio"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <button disabled={loading} onClick={() => void handleCorrect()} type="button">
+          {trainingReady ? "Lưu nhãn đã chỉnh sửa" : "Lưu nhãn đã chọn"}
+        </button>
+      </div>
     </div>
   );
 }

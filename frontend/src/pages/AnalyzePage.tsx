@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   analyzeImage,
+  getCaseReportHtml,
   getCaseResults,
   getJobStatus,
   listMyCases,
@@ -16,7 +17,7 @@ import type {
   CaseResultsResponse,
   JobStatusResponse,
 } from "../types/api";
-import { compactId } from "../utils/format";
+import { compactId, formatCacheStatus, formatProcessingStatus } from "../utils/format";
 
 const initialValues: AnalyzeFormValues = {
   patient_code: "",
@@ -36,11 +37,13 @@ const departments = [
   "ICU",
 ];
 
+const timelineSteps = ["queued", "processing", "completed"] as const;
+
 type AnalyzePageProps = {
-  onOpenCases?: () => void;
+  onOpenCase?: (caseId: string) => void;
 };
 
-export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
+export function AnalyzePage({ onOpenCase }: AnalyzePageProps) {
   const [values, setValues] = useState<AnalyzeFormValues>(initialValues);
   const [knownCases, setKnownCases] = useState<CaseListItem[]>([]);
   const [image, setImage] = useState<File | null>(null);
@@ -49,6 +52,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
   const [jobStatus, setJobStatus] = useState<JobStatusResponse | null>(null);
   const [caseResults, setCaseResults] = useState<CaseResultsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
 
@@ -56,8 +60,8 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     () => caseResults?.results ?? response?.results ?? [],
     [caseResults, response],
   );
-  const currentCaseStatus = String(
-    caseResults?.status ?? jobStatus?.status ?? response?.status ?? "",
+  const currentStatus = String(
+    caseResults?.status ?? jobStatus?.status ?? response?.status ?? "ready",
   );
   const matchingPatientCases = useMemo(() => {
     const patientCode = values.patient_code.trim().toLowerCase();
@@ -72,9 +76,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
   useEffect(() => {
     listMyCases()
       .then(setKnownCases)
-      .catch(() => {
-        setKnownCases([]);
-      });
+      .catch(() => setKnownCases([]));
   }, []);
 
   useEffect(() => {
@@ -144,6 +146,7 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setMessage(null);
     setResponse(null);
     setJobStatus(null);
     setCaseResults(null);
@@ -182,136 +185,55 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
     }
   }
 
+  async function openReport() {
+    if (!response?.case_id) {
+      return;
+    }
+    setError(null);
+    try {
+      const html = await getCaseReportHtml(response.case_id);
+      const reportUrl = URL.createObjectURL(
+        new Blob([html], { type: "text/html;charset=utf-8" }),
+      );
+      window.open(reportUrl, "_blank", "noopener,noreferrer");
+      setMessage("Đã mở báo cáo HTML trong tab mới.");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Không xuất được báo cáo.");
+    }
+  }
+
+  function resetAnalyzeForm() {
+    setValues(initialValues);
+    setImage(null);
+    setResponse(null);
+    setJobStatus(null);
+    setCaseResults(null);
+    setError(null);
+    setMessage(null);
+    setIsPolling(false);
+  }
+
   return (
     <section className="page">
       <div className="page-header">
         <div>
           <h2>Phân tích ảnh X-quang</h2>
           <p>
-            Tạo ca mới, kiểm tra thông tin bệnh nhân và gửi ảnh vào hàng đợi AI.
+            Tạo ca mới, kiểm tra thông tin bệnh nhân và gửi ảnh vào hàng đợi AI
+            khi bác sĩ/KTV bấm phân tích.
           </p>
         </div>
-        <StatusBadge value={jobStatus?.status ?? response?.status ?? "sẵn sàng"} />
+        <StatusBadge value={currentStatus} />
       </div>
 
-      <div className="analysis-layout">
-        <form className="panel form-grid analysis-form" onSubmit={handleSubmit}>
-          <div className="form-section span-2">
-            <span className="step-badge">1</span>
-            <div>
-              <h3>Thông tin bệnh nhân</h3>
-              <p className="muted">
-                Mã bệnh nhân được dùng để đối chiếu lịch sử ca đã upload.
-              </p>
-            </div>
-          </div>
-          <label>
-            Mã bệnh nhân
-            <input
-              className={matchingPatientCases.length > 0 ? "input-warning" : ""}
-              onChange={(event) =>
-                setValues({ ...values, patient_code: event.target.value })
-              }
-              required
-              value={values.patient_code}
-            />
-            {matchingPatientCases.length > 0 && (
-              <small className="field-hint warning-text">
-                Đã có {matchingPatientCases.length} ca với mã này. Hãy kiểm tra
-                đúng bệnh nhân trước khi gửi ảnh mới.
-              </small>
-            )}
-          </label>
-          <label>
-            Họ tên
-            <input
-              onChange={(event) =>
-                setValues({ ...values, full_name: event.target.value })
-              }
-              required
-              value={values.full_name}
-            />
-          </label>
-          <label>
-            Giới tính
-            <select
-              onChange={(event) =>
-                setValues({ ...values, gender: event.target.value })
-              }
-              required
-              value={values.gender}
-            >
-              <option value="">Chọn giới tính</option>
-              <option value="Nam">Nam</option>
-              <option value="Nữ">Nữ</option>
-              <option value="Khác">Khác</option>
-            </select>
-          </label>
-          <label>
-            Năm sinh
-            <input
-              max="2100"
-              min="1900"
-              onChange={(event) =>
-                setValues({ ...values, birth_year: event.target.value })
-              }
-              type="number"
-              value={values.birth_year}
-            />
-          </label>
-          <label>
-            Khoa/phòng
-            <select
-              onChange={(event) =>
-                setValues({ ...values, department: event.target.value })
-              }
-              value={values.department}
-            >
-              <option value="">Chọn khoa/phòng</option>
-              {departments.map((department) => (
-                <option key={department} value={department}>
-                  {department}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="span-2">
-            Ghi chú lâm sàng
-            <textarea
-              onChange={(event) =>
-                setValues({ ...values, note: event.target.value })
-              }
-              placeholder="Ví dụ: sốt, ho kéo dài, nghi tràn dịch..."
-              rows={3}
-              value={values.note}
-            />
-          </label>
-
-          <div className="form-section span-2">
-            <span className="step-badge">2</span>
-            <div>
-              <h3>Ảnh cần phân tích</h3>
-              <p className="muted">Hỗ trợ PNG/JPG. Không tải lên dữ liệu bệnh nhân thật trong môi trường demo.</p>
-            </div>
-          </div>
-          <label className="span-2">
-            Ảnh X-quang
-            <input
-              accept="image/png,image/jpeg"
-              onChange={(event) => setImage(event.target.files?.[0] ?? null)}
-              required
-              type="file"
-            />
-          </label>
-          <button className="primary span-2 submit-button" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Đang gửi ảnh vào hàng đợi..." : "Gửi ảnh để AI phân tích"}
-          </button>
-        </form>
-
-        <div className="panel">
+      <form className="analysis-layout" onSubmit={handleSubmit}>
+        <div className="panel analysis-image-panel">
           <div className="section-heading">
-            <h3>Preview và kết quả</h3>
-            <StatusBadge value={isPolling ? "đang xử lý" : response?.status ?? "chưa gửi"} />
+            <div>
+              <h3>Ảnh X-quang</h3>
+              <p className="muted">Chọn ảnh PNG/JPG và kiểm tra preview trước khi gửi.</p>
+            </div>
+            <span className="step-badge">1</span>
           </div>
           {previewUrl ? (
             <div className="image-preview">
@@ -320,6 +242,15 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
           ) : (
             <div className="empty-preview">Chưa chọn ảnh</div>
           )}
+          <label>
+            Tệp ảnh
+            <input
+              accept="image/png,image/jpeg"
+              onChange={(event) => setImage(event.target.files?.[0] ?? null)}
+              required
+              type="file"
+            />
+          </label>
           <dl className="detail-list compact">
             <div>
               <dt>Tên file</dt>
@@ -334,59 +265,187 @@ export function AnalyzePage({ onOpenCases }: AnalyzePageProps) {
               <dd>{image?.type || "-"}</dd>
             </div>
           </dl>
+        </div>
 
-          {error && <Message tone="error">{error}</Message>}
-          {response?.cache_hit && (
-            <Message tone="success">
-              Kết quả được lấy từ cache, không tạo job mới.
-            </Message>
-          )}
-          {isPolling && <Message>AI đang xử lý. Kết quả sẽ tự cập nhật khi hoàn tất.</Message>}
-          <dl className="detail-list">
-            <div>
-              <dt>Cache hit</dt>
-              <dd>
-                <StatusBadge value={response?.cache_hit ?? false} />
-              </dd>
+        <div className="panel analysis-work-panel">
+          <div className="form-grid compact-form">
+            <div className="form-section span-2">
+              <span className="step-badge">2</span>
+              <div>
+                <h3>Thông tin bệnh nhân</h3>
+                <p className="muted">
+                  Mã bệnh nhân giúp đối chiếu lịch sử ca đã upload trước đó.
+                </p>
+              </div>
             </div>
-            <div>
-              <dt>Case ID</dt>
-              <dd title={response?.case_id ?? ""}>{compactId(response?.case_id)}</dd>
-            </div>
-            <div>
-              <dt>Job ID</dt>
-              <dd title={response?.job_id ?? ""}>{compactId(response?.job_id)}</dd>
-            </div>
-            <div>
-              <dt>Model version</dt>
-              <dd>{response?.model_version ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Trạng thái</dt>
-              <dd>
-                <StatusBadge value={jobStatus?.status ?? response?.status ?? "-"} />
-              </dd>
-            </div>
-          </dl>
-          <div className="section-heading">
-            <h3>Kết quả AI</h3>
-            {response?.case_id && onOpenCases && (
-              <button onClick={onOpenCases} type="button">
-                Mở ca trong lịch sử
-              </button>
+            <label>
+              Mã bệnh nhân
+              <input
+                className={matchingPatientCases.length > 0 ? "input-warning" : ""}
+                onChange={(event) =>
+                  setValues({ ...values, patient_code: event.target.value })
+                }
+                required
+                value={values.patient_code}
+              />
+              {matchingPatientCases.length > 0 && (
+                <small className="field-hint warning-text">
+                  Đã có {matchingPatientCases.length} ca với mã này. Hãy kiểm tra
+                  đúng bệnh nhân trước khi gửi ảnh mới.
+                </small>
+              )}
+            </label>
+            <label>
+              Họ tên
+              <input
+                onChange={(event) =>
+                  setValues({ ...values, full_name: event.target.value })
+                }
+                required
+                value={values.full_name}
+              />
+            </label>
+            <label>
+              Giới tính
+              <select
+                onChange={(event) =>
+                  setValues({ ...values, gender: event.target.value })
+                }
+                required
+                value={values.gender}
+              >
+                <option value="">Chọn giới tính</option>
+                <option value="Nam">Nam</option>
+                <option value="Nữ">Nữ</option>
+                <option value="Khác">Khác</option>
+              </select>
+            </label>
+            <label>
+              Năm sinh
+              <input
+                max="2100"
+                min="1900"
+                onChange={(event) =>
+                  setValues({ ...values, birth_year: event.target.value })
+                }
+                type="number"
+                value={values.birth_year}
+              />
+            </label>
+            <label>
+              Khoa/phòng
+              <select
+                onChange={(event) =>
+                  setValues({ ...values, department: event.target.value })
+                }
+                value={values.department}
+              >
+                <option value="">Chọn khoa/phòng</option>
+                {departments.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="span-2">
+              Ghi chú lâm sàng
+              <textarea
+                onChange={(event) =>
+                  setValues({ ...values, note: event.target.value })
+                }
+                placeholder="Ví dụ: sốt, ho kéo dài, nghi tràn dịch..."
+                rows={2}
+                value={values.note}
+              />
+            </label>
+            <button className="primary span-2 submit-button" disabled={isSubmitting} type="submit">
+              {isSubmitting ? "Đang gửi ảnh vào hàng đợi..." : "Phân tích AI"}
+            </button>
+          </div>
+
+          <div className="analysis-status-block">
+            {error && <Message tone="error">{error}</Message>}
+            {message && <Message tone="success">{message}</Message>}
+            {response?.cache_hit && (
+              <Message tone="success">
+                {formatCacheStatus(true)}: kết quả được lấy từ cache, không tạo job mới.
+              </Message>
+            )}
+            {isPolling && (
+              <Message>AI đang xử lý. Kết quả sẽ tự cập nhật khi hoàn tất.</Message>
+            )}
+            <StatusTimeline status={currentStatus} />
+            <dl className="detail-list compact">
+              <div>
+                <dt>Mã ca</dt>
+                <dd title={response?.case_id ?? ""}>{compactId(response?.case_id)}</dd>
+              </div>
+              <div>
+                <dt>Mã job</dt>
+                <dd title={response?.job_id ?? ""}>{compactId(response?.job_id)}</dd>
+              </div>
+              <div>
+                <dt>Phiên bản model</dt>
+                <dd>{response?.model_version ?? "-"}</dd>
+              </div>
+            </dl>
+            {response?.case_id && (
+              <div className="actions">
+                <button
+                  onClick={() => onOpenCase?.(response.case_id as string)}
+                  type="button"
+                >
+                  Xem chi tiết ca
+                </button>
+                <button onClick={() => void openReport()} type="button">
+                  Xuất báo cáo
+                </button>
+                <button onClick={resetAnalyzeForm} type="button">
+                  Phân tích ảnh mới
+                </button>
+              </div>
             )}
           </div>
-          <ResultTable results={results} />
+
+          <div>
+            <h3>Kết quả AI</h3>
+            <ResultTable results={results} />
+          </div>
           {response?.case_id && results.length > 0 && (
             <TrainingConfirmationPanel
               caseId={response.case_id}
-              caseStatus={currentCaseStatus}
+              caseStatus={currentStatus}
               results={results}
             />
           )}
         </div>
-      </div>
+      </form>
     </section>
+  );
+}
+
+function StatusTimeline({ status }: { status: string }) {
+  const failed = status === "failed";
+  const activeIndex = timelineSteps.findIndex((step) => step === status);
+  return (
+    <div className="status-timeline" aria-label="Trạng thái xử lý">
+      {timelineSteps.map((step, index) => {
+        const reached = activeIndex >= index || status === "completed";
+        return (
+          <div className={reached ? "reached" : ""} key={step}>
+            <span>{index + 1}</span>
+            <strong>{formatProcessingStatus(step)}</strong>
+          </div>
+        );
+      })}
+      {failed && (
+        <div className="failed reached">
+          <span>!</span>
+          <strong>{formatProcessingStatus("failed")}</strong>
+        </div>
+      )}
+    </div>
   );
 }
 

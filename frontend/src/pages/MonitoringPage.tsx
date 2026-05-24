@@ -53,23 +53,23 @@ const INFRASTRUCTURE_LINKS = [
 
 const DASHBOARD_LINKS = [
   {
-    label: "System Overview",
+    label: "Tổng quan hệ thống",
     href: "http://localhost:3000/d/system-overview/system-overview?orgId=1",
   },
   {
-    label: "Application Overview",
+    label: "Tổng quan ứng dụng",
     href: "http://localhost:3000/d/application-overview/application-overview?orgId=1",
   },
   {
-    label: "Celery And Redis",
+    label: "Celery và Redis",
     href: "http://localhost:3000/d/celery-redis/celery-and-redis?orgId=1",
   },
   {
-    label: "Logs Overview",
+    label: "Tổng quan logs",
     href: "http://localhost:3000/d/logs-overview/logs-overview?orgId=1",
   },
   {
-    label: "PostgreSQL And MinIO",
+    label: "PostgreSQL và MinIO",
     href: "http://localhost:3000/d/postgres-minio/postgresql-and-minio?orgId=1",
   },
 ];
@@ -100,9 +100,9 @@ export function MonitoringPage() {
     <section className="page">
       <div className="page-header">
         <div>
-          <h2>Monitoring</h2>
+          <h2>Giám sát vận hành</h2>
           <p>
-            Summary vận hành trong app. Dùng Grafana/Prometheus khi cần phân tích
+            Tóm tắt vận hành trong app. Dùng Grafana/Prometheus khi cần phân tích
             sâu hơn.
           </p>
         </div>
@@ -119,7 +119,7 @@ export function MonitoringPage() {
         </div>
       </div>
 
-      <div className="tab-list" role="tablist" aria-label="Monitoring sections">
+      <div className="tab-list" role="tablist" aria-label="Các mục giám sát">
         {TABS.map((tab) => (
           <button
             className={activeTab === tab.key ? "active" : ""}
@@ -146,7 +146,7 @@ function OverviewTab({ summary }: { summary: MonitoringSummary | null }) {
   if (!summary) {
     return (
       <div className="panel empty-state">
-        <strong>Chưa có monitoring summary</strong>
+        <strong>Chưa có tóm tắt giám sát</strong>
         <p>Thử tải lại hoặc kiểm tra backend tại cổng 8000.</p>
       </div>
     );
@@ -157,30 +157,30 @@ function OverviewTab({ summary }: { summary: MonitoringSummary | null }) {
       <div className="summary-grid">
         <SummaryItem label="Backend" value={summary.backend_status} />
         <SummaryItem
-          label="Database"
+          label="CSDL"
           value={summary.database_reachable ? "ok" : "unreachable"}
         />
         <SummaryItem label="Redis broker" value={summary.redis_broker_status} />
         <SummaryItem
-          label="Celery queue"
+          label="Hàng đợi Celery"
           value={summary.celery_queue_length ?? "unknown"}
         />
-        <SummaryItem label="Total cases" value={summary.total_cases} />
-        <SummaryItem label="Pending reviews" value={summary.pending_reviews} />
+        <SummaryItem label="Tổng ca" value={summary.total_cases} />
+        <SummaryItem label="Ca chờ duyệt" value={summary.pending_reviews} />
         <SummaryItem label="Training-ready" value={summary.training_ready_cases} />
       </div>
 
       <div className="split-layout">
         <div className="panel">
-          <h3>Active model</h3>
+          <h3>Model đang hoạt động</h3>
           {summary.active_model ? (
             <dl className="detail-list">
               <div>
-                <dt>Name</dt>
+                <dt>Tên model</dt>
                 <dd>{summary.active_model.model_name}</dd>
               </div>
               <div>
-                <dt>Version</dt>
+                <dt>Phiên bản</dt>
                 <dd>{summary.active_model.version}</dd>
               </div>
               <div>
@@ -189,23 +189,23 @@ function OverviewTab({ summary }: { summary: MonitoringSummary | null }) {
               </div>
             </dl>
           ) : (
-            <Message tone="warning">Chưa có active model.</Message>
+            <Message tone="warning">Chưa có model đang hoạt động.</Message>
           )}
         </div>
 
         <div className="panel">
-          <h3>Runtime metrics</h3>
+          <h3>Chỉ số runtime</h3>
           <KeyValueTable values={summary.metrics} />
         </div>
       </div>
 
       <div className="split-layout">
         <div className="panel">
-          <h3>Jobs by status</h3>
+          <h3>Job theo trạng thái</h3>
           <StatusTable values={summary.total_jobs_by_status} />
         </div>
         <div className="panel">
-          <h3>Reviews by status</h3>
+          <h3>Review theo trạng thái</h3>
           <StatusTable values={summary.reviews_by_status} />
         </div>
       </div>
@@ -217,7 +217,7 @@ function InfrastructureTab() {
   return (
     <>
       <div className="panel">
-        <h3>Grafana dashboards</h3>
+        <h3>Dashboard Grafana</h3>
         <p className="muted">Các dashboard đã được provision sẵn bằng Prometheus và Loki.</p>
         <div className="link-grid">
           {DASHBOARD_LINKS.map((link) => (
@@ -230,7 +230,7 @@ function InfrastructureTab() {
       </div>
 
       <div className="panel">
-        <h3>Operations tools</h3>
+        <h3>Công cụ vận hành</h3>
         <div className="link-grid">
           {INFRASTRUCTURE_LINKS.map((link) => (
             <a className="link-card" href={link.href} key={link.href} rel="noreferrer" target="_blank">
@@ -248,7 +248,7 @@ function LogsTab() {
   return (
     <div className="split-layout">
       <div className="panel">
-        <h3>Log dashboards</h3>
+        <h3>Dashboard log</h3>
         <p className="muted">
           Promtail đọc Docker logs và đẩy vào Loki. Dùng Grafana Explore để lọc
           theo service như backend, celery_worker, postgres hoặc minio.
@@ -260,7 +260,7 @@ function LogsTab() {
             rel="noreferrer"
             target="_blank"
           >
-            Logs dashboard
+            Dashboard log
           </a>
           <a className="button-link" href="http://localhost:3000/explore?orgId=1" rel="noreferrer" target="_blank">
             Grafana Explore

@@ -82,7 +82,9 @@ docs/
 artifacts/
   models/           local weights placeholder, ignored except README
   sample_images/    local demo images placeholder, ignored except README
+  training_seed/    local labeled seed images, ignored except README
   retraining_manifests/ generated manifests, ignored except README
+  evaluation_set/   local fixed evaluation images, ignored except README
 ```
 
 ## Demo Accounts
@@ -109,7 +111,26 @@ The default Docker Compose ML config expects the local checkpoint at:
 artifacts/models/best_model.pth
 ```
 
-This file is mounted into backend and Celery containers at `/app/artifacts/models/best_model.pth`. It is ignored by Git and is not copied into the Docker image. Retrained candidate checkpoints are also written under `artifacts/models/` and stay ignored by Git.
+This file is mounted into backend and Celery containers at `/app/artifacts/models/best_model.pth`. It is ignored by Git and is not copied into the Docker image. Retrained candidate checkpoints are written under `artifacts/retrained_models/` and stay ignored by Git.
+
+Local labeled data folders are mounted into backend/Celery containers:
+
+```text
+artifacts/training_seed/Atelectasis/
+artifacts/training_seed/Effusion/
+artifacts/training_seed/Infiltration/
+artifacts/training_seed/No_Finding/
+
+artifacts/evaluation_set/Atelectasis/
+artifacts/evaluation_set/Effusion/
+artifacts/evaluation_set/Infiltration/
+artifacts/evaluation_set/No_Finding/
+```
+
+`training_seed` is used for fine-tuning together with new doctor/admin confirmed
+or corrected DB cases, but it does not count toward retraining threshold `N`.
+`evaluation_set` is used only for evaluation, never training. Do not commit image
+data or model weights.
 
 ## URLs
 
@@ -128,6 +149,20 @@ This file is mounted into backend and Celery containers at `/app/artifacts/model
 - RedisInsight: http://localhost:5540
 
 The backend is an API server, not the web frontend. Use the frontend URL for the application UI and the Swagger URL for API exploration.
+
+MLflow is accessed from the browser at `http://localhost:5000`. Backend and Celery containers must keep using `MLFLOW_TRACKING_URI=http://mlflow:5000`. If MLflow shows `Invalid Host header - possible DNS rebinding attack detected`, add the host/IP/domain to `MLFLOW_ALLOWED_HOSTS` in `.env` and restart MLflow:
+
+```bash
+docker compose up -d --build mlflow
+```
+
+Local demo hosts:
+
+```env
+MLFLOW_ALLOWED_HOSTS=localhost,localhost:*,127.0.0.1,127.0.0.1:*,mlflow,mlflow:*,0.0.0.0,0.0.0.0:*
+```
+
+For LAN or domain access, append values such as `192.168.1.10,192.168.1.10:*` or `mlflow.example.com,mlflow.example.com:*`. Do not use a global `*` wildcard in production unless you understand the DNS rebinding risk.
 
 Grafana demo login:
 
@@ -185,6 +220,8 @@ Admin users see operational tools:
 - `Tất cả ca chụp`: inspect cases and archive cases without deleting images or results.
 - `Monitoring`: backend, Redis, job/review metrics, Prometheus, Grafana, Loki, Flower, RedisInsight, and cAdvisor links.
 
+Label correction note: doctors/admins can update a confirmed or corrected label and note. The current schema stores the latest `confirmed_labels`, `reviewed_by`, `reviewed_at`, and note; full historical audit versions for every label edit are a future enhancement.
+
 Archive/deactivate behavior:
 
 - Archived cases are hidden from the main case list, but their database rows, images, jobs, and analysis results remain stored.
@@ -209,8 +246,71 @@ Retraining confirmation and trigger checks:
 curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/review-status
 curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/cases/CASE_ID/confirm-result
 curl -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/summary
-curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/trigger
+curl -X POST -H "Authorization: Bearer TOKEN" http://localhost:8000/api/v1/admin/mlops/retraining/start
 ```
+
+Retraining threshold `N` is controlled by `RETRAIN_MIN_CONFIRMED_SAMPLES` in `.env`.
+`N` counts only new DB cases whose labels were confirmed or corrected by a
+doctor/admin. Local images under `artifacts/training_seed` help fine-tune the
+model but never satisfy the threshold by themselves.
+For pipeline testing you can set `N=1`, restart backend and Celery, confirm one case,
+then start fine-tuning manually or let the system create a job automatically when
+`RETRAIN_AUTO_START=true`:
+
+```bash
+docker compose up -d --build backend celery_worker
+docker compose exec backend python scripts/retraining_smoke_test.py
+docker compose exec backend python scripts/retraining_smoke_test.py --start
+docker compose exec backend python scripts/inspect_training_data.py
+```
+
+Test `N=2` and `N=5` similarly by setting `RETRAIN_MIN_CONFIRMED_SAMPLES=2`
+or `RETRAIN_MIN_CONFIRMED_SAMPLES=5`, restarting `backend` and `celery_worker`,
+then confirming/correcting at least that many completed cases. Tiny sample counts
+only test the pipeline and are not clinically meaningful.
+
+Local training seed data should be placed locally under:
+
+```text
+artifacts/training_seed/Atelectasis/
+artifacts/training_seed/Effusion/
+artifacts/training_seed/Infiltration/
+artifacts/training_seed/No_Finding/
+```
+
+Use the same class order as the MobileNetV3-Small model:
+`Atelectasis`, `Effusion`, `Infiltration`, `No_Finding`.
+`No Finding` is accepted as a folder alias, but `No_Finding` is canonical.
+Suggested counts:
+
+- Pipeline test: 5-10 images/class seed, 5 images/class eval.
+- Demo: 50-100 images/class seed, 20-50 images/class eval.
+- Stronger evaluation: 200+ images/class seed, 100+ images/class eval.
+
+Fixed evaluation data should be placed locally under:
+
+```text
+artifacts/evaluation_set/Atelectasis/
+artifacts/evaluation_set/Effusion/
+artifacts/evaluation_set/Infiltration/
+artifacts/evaluation_set/No_Finding/
+```
+
+`EVALUATION_SET_DIR` points to `/app/artifacts/evaluation_set` in Docker. These
+images are ignored by Git. If the evaluation set is missing or empty, retraining
+falls back to a validation split only for pipeline testing and stores a warning in
+the retraining job. Fine-tuning logs params, metrics, manifest, checkpoint, class
+metadata, and `evaluation_source` to MLflow at http://localhost:5000. The retrained
+candidate is stored as inactive `ai_models` metadata; activate it only after Admin
+review using `promote-if-better` or the Admin Models page.
+
+Promotion uses `MODEL_PROMOTION_METRIC=f1_score` and
+`MODEL_PROMOTION_MIN_DELTA=0.0` by default. `MODEL_AUTO_PROMOTE=false` keeps
+retrained models as inactive candidates until Admin explicitly promotes them.
+Evidently AI can be added later for data drift, prediction drift, and performance
+monitoring when ground truth becomes available. MLflow remains responsible for
+training runs and model registry, and Evidently does not replace fixed evaluation
+metrics or the promotion gate.
 
 Manual real-model local inference:
 
@@ -252,6 +352,7 @@ Windows PowerShell final check:
 - If image upload or worker download fails, check MinIO is running and `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and `MINIO_BUCKET` are configured.
 - If real-model inference fails, confirm `artifacts/models/best_model.pth` exists locally and Docker Compose mounted `./artifacts/models:/app/artifacts/models`.
 - If MLflow registration fails, confirm MLflow is running at http://localhost:5000 and Docker backend uses `MLFLOW_TRACKING_URI=http://mlflow:5000`.
+- If MLflow shows `Invalid Host header - possible DNS rebinding attack detected`, update `MLFLOW_ALLOWED_HOSTS` in `.env` with the browser host, then run `docker compose up -d --build mlflow`.
 - If jobs stay queued, open Flower at http://localhost:5555 and check `docker compose logs -f celery_worker`.
 - If Redis queue state is unclear, open RedisInsight at http://localhost:5540.
 - If Grafana is empty, log in with `admin` / `admin123`, open the `Medical Imaging Demo` folder, and confirm Prometheus can scrape `http://backend:8000/metrics` from Docker Compose.
