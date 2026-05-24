@@ -701,12 +701,6 @@ function AdminReviewMlopsPage() {
             Cần thêm {summary.missing_confirmed_samples} ca đã xác nhận/gán nhãn lại.
           </Message>
         )}
-        {summary && (
-          <Message tone="info">
-            Training seed là dữ liệu gán nhãn sẵn trên hệ thống, dùng để hỗ trợ
-            fine-tune nhưng không được tính vào ngưỡng N dữ liệu mới.
-          </Message>
-        )}
         {summary?.evaluation_warning && (
           <Message tone="warning">{summary.evaluation_warning}</Message>
         )}
